@@ -1,0 +1,31 @@
+{
+  // Standalone config. This repo was carved out of the lp2ptoip monorepo and now
+  // consumes @p2p-trust-stack/* from npm, so it no longer extends ../../tsconfig.json.
+  // These compilerOptions were inherited from the monorepo root; keep them in sync
+  // with the stack's TypeScript settings.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2022", "DOM"],
+    // TypeScript 6 defaults `types` to [], so @types/node is not auto-included.
+    // Without this, every `node:` builtin import reports "Cannot find name 'node:fs'".
+    "types": ["node"],
+    // agent-app is its own project: every source it compiles lives under this directory,
+    // so the output layout is dist/{src,web,tui,…}.
+    "rootDir": ".",
+    "outDir": "./dist",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

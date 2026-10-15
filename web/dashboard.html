@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en" data-page="dashboard">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Trust Agent — Dashboard</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .two-col { display: flex; gap: 20px; flex-wrap: wrap; }
+  .two-col > * { flex: 1; min-width: 320px; }
+  .oooi-box { background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11px; word-break: break-all; max-height: 100px; overflow-y: auto; margin: 8px 0; }
+  .status-msg { padding: 10px 14px; border-radius: 6px; margin-bottom: 8px; display: none; }
+  .status-msg.success { background: #064e3b; color: #34d399; }
+  .status-msg.error { background: #7f1d1d; color: #fca5a5; }
+  .status-msg.info { background: #1e3a5f; color: #93c5fd; }
+  .rel-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+  .rel-item .dir { font-size: 18px; width: 28px; text-align: center; }
+  .rel-item .vid { font-family: monospace; font-size: 12px; flex: 1; min-width: 140px; }
+  .rel-item .status { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .status-connected { background: #064e3b; color: #34d399; }
+  .status-pending { background: #78350f; color: #fbbf24; }
+  .vrc-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; white-space: nowrap; }
+  .vrc-verified { background: #065f46; color: #34d399; }
+  .vrc-unverified { color: #64748b; }
+  .tab-bar { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab-btn { padding: 8px 16px; border: 1px solid #1e2535; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; font-size: 13px; }
+  .tab-btn.active { background: #1e3a5f; color: #60a5fa; border-color: #2563eb; }
+  .copy-btn { cursor: pointer; font-size: 12px; padding: 4px 10px; background: #1e3a5f; color: #93c5fd; border: 1px solid #2563eb; border-radius: 4px; }
+  .copy-btn:hover { background: #2563eb; color: white; }
+  .event-log { background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; padding: 10px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 11px; }
+  .event-log .entry { padding: 2px 0; border-bottom: 1px solid #1a1f2e; }
+  .event-log .entry.c-connect { color: #34d399; }
+  .event-log .entry.c-msg { color: #cbd5e1; }
+  .event-log .entry.c-err { color: #f87171; }
+  .event-log .entry.c-info { color: #64748b; }
+  #ack-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center; }
+  #ack-modal .ack-box { background:#0a0e17; border:1px solid #7f1d1d; border-radius:8px; max-width:520px; width:90%; padding:20px; box-shadow:0 8px 30px rgba(0,0,0,0.5); }
+  #ack-modal h3 { margin:0 0 8px; color:#fca5a5; font-size:15px; }
+  #ack-modal p { color:#e0e6ed; margin:0 0 16px; font-size:13px; word-break:break-all; }
+  #ack-modal .ack-ok { font-size:13px; padding:6px 16px; background:#7f1d1d; color:#fca5a5; border:1px solid #fca5a5; border-radius:6px; cursor:pointer; }
+  #ack-modal .ack-ok:hover { background:#991b1b; color:#fff; }
+</style>
+</head>
+<body data-page="dashboard">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div id="status-area"></div>
+
+  <div class="two-col">
+    <!-- Left Column: Identity + OOBI/Connect tabs -->
+    <div>
+      <div class="card">
+        <h2>Identity</h2>
+        <div id="identity">Loading…</div>
+      </div>
+
+      <div class="card">
+        <div class="tab-bar">
+          <button class="tab-btn active" data-tab="oobi" onclick="switchTab('oobi')">🪪 My OOBI</button>
+          <button class="tab-btn" data-tab="connect" onclick="switchTab('connect')">🔗 Connect</button>
+        </div>
+        <div id="tab-oobi">
+          <p class="muted">Share this OOBI with a peer so they can connect to you.</p>
+          <button class="btn btn-primary" id="generate-oobi-btn" onclick="generateOobi()">Generate OOBI</button>
+          <div id="oobi-display" style="margin-top:10px; display:none;">
+            <div class="oooi-box" id="oobi-text"></div>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+              <button class="copy-btn" onclick="copyOobi()">📋 Copy to Clipboard</button>
+              <span class="muted" id="copy-status"></span>
+            </div>
+          </div>
+        </div>
+        <div id="tab-connect" style="display:none;">
+          <p class="muted">Paste a peer's OOBI to initiate a connection.</p>
+          <textarea id="connect-oobi-input" placeholder="Paste OOBI string here…" rows="4" style="width:100%; background:#0a0e17; border:1px solid #1e2535; border-radius:6px; color:#e0e6ed; padding:8px; font-family:monospace; font-size:12px; resize:vertical;"></textarea>
+          <button class="btn btn-primary" style="margin-top:8px;" onclick="connectToPeer()">Connect</button>
+          <span class="muted" id="connect-status" style="margin-left:8px;"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Relationships + Event Log -->
+    <div>
+      <div class="card">
+        <h2>Relationships <span class="muted" id="rel-count"></span></h2>
+        <div id="relationships">Loading…</div>
+      </div>
+      <div class="card">
+        <h2>&#x1F3DB;&#xFE0F; Communities <span class="muted" id="comm-count"></span></h2>
+        <div id="communities-summary">Loading…</div>
+      </div>
+      <div class="card">
+        <h2>Event Log</h2>
+        <div class="event-log" id="event-log">
+          <div class="entry c-info">Agent started. Waiting for events…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Acknowledgment-required modal (relationship already exists) -->
+<div id="ack-modal">
+  <div class="ack-box">
+    <h3>⚠ Relationship already exists</h3>
+    <p id="ack-modal-message"></p>
+    <div style="text-align:right;">
+      <button class="ack-ok" onclick="dismissAckModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script src="assets/ceremony-panel.js"></script>
+<script>
+var identData = null;
+var lastRelSnapshot = '';
+
+// ── Personhood ceremony (in-row expansion) ─────────────────────────────────────────────
+// Every ack-window value is SERVER-OWNED (see assets/ceremony-panel.js): the 60s
+// deadline derives from relationships.created_at, so both peers count down to the
+// same instant. This page owns no timer of its own, and the button + the countdown
+// + all status copy live in the shared panel so every surface shows the same thing.
+var ceremonyCompleteLogged = {}; // remoteVid -> true (emit "VRC created…" only once)
+var lastRenderedDids = {}; // remoteVid -> seen in the last render (detect server-side resets)
+
+CeremonyPanel.setLog(addEvent);
+CeremonyPanel.setOnChange(function (vid) { if (vid) loadCeremonyStatus(vid); });
+
+function apiGet(path) { return fetch(path).then(function(r){ if(!r.ok) throw new Error(r.statusText); return r.json(); }); }
+function apiPost(path, body) { return fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) }).then(function(r){ return r.json().then(function(d){ if(!r.ok){ var e = new Error(d.error?.message||'HTTP '+r.status); e.code = d.error?.code||null; throw e; } return d; }); }); }
+function el(id) { return document.getElementById(id); }
+
+function showStatus(msg, type) {
+  var area = el('status-area');
+  area.innerHTML = '<div class="status-msg '+type+'" style="display:block;">'+msg+'</div>';
+  setTimeout(function(){ area.innerHTML = ''; }, 5000);
+}
+
+// ── Acknowledgment-required modal ─────────────────────────────────────────
+function showAckModal(msg) {
+  var box = el('ack-modal-message');
+  var modal = el('ack-modal');
+  // If the modal markup is missing (stale/partial page), fall back to a native
+  // dialog so the user ALWAYS sees the already-have-a-relationship message.
+  if (!box || !modal) { alert(msg || 'You already have a relationship with this peer.'); return; }
+  box.textContent = msg;
+  modal.style.display = 'flex';
+}
+function dismissAckModal() {
+  var m = el('ack-modal');
+  if (m) m.style.display = 'none';
+}
+
+// ── SSE: duplicate-connect notice from an already-connected peer ───────────
+// When the OTHER agent re-pastes an OOBI + presses Connect for our shared
+// (verified) relationship, the agent pushes `duplicate-connect-notice` over
+// SSE so THIS dashboard also shows "You already have a relationship with
+// <name>." with a Close button (display returns to the pre-paste state).
+// Subscriptions replace the page's own EventSource. `AgentStack` owns the single connection and hands the
+// PARSED payload to each handler, so there is no `ev.data` to unwrap here.
+function startEventSource() {
+  if (!window.AgentStack) return;
+  AgentStack.on('duplicate-connect-notice', function (d) {
+    var who = (d && d.remoteName && String(d.remoteName).trim())
+      ? String(d.remoteName).trim()
+      : (d && d.remoteDid ? String(d.remoteDid).slice(0,24)+'…' : 'this peer');
+    showAckModal('You already have a relationship with ' + who + '.');
+    addEvent('Peer attempted a duplicate OOBI connect — relationship already exists.', 'c-err');
+  });
+  // Ceremony lifecycle pushes — so BOTH displays react the moment a side confirms (or the window closes).
+  ['ceremony-state', 'ceremony-expired', 'ceremony-complete', 'ceremony-failed'].forEach(function (name) {
+    AgentStack.on(name, function (d) {
+      try { CeremonyPanel.handleSseEvent(name, d); } catch (e) { /* ignore malformed event */ }
+      // A ceremony advancing can finalize the VRC without changing /api/relationships, which is what the
+      // removed 2 s poll was for. Re-read this peer's status on the push instead.
+      if (d && d.remoteDid) loadCeremonyStatus(d.remoteDid);
+    });
+  });
+  // A relationship changed — re-fetch and re-render (replaces the 2 s `/api/relationships` poll).
+  AgentStack.on('relationship-changed', function () { pollRelationships(); });
+}
+startEventSource();
+// Enter / Space acknowledges while the modal is visible.
+document.addEventListener('keydown', function(ev){
+  var m = el('ack-modal');
+  if (m && m.style.display === 'flex' && (ev.key === 'Enter' || ev.key === ' ')) {
+    ev.preventDefault();
+    dismissAckModal();
+  }
+});
+
+// ── Tabs ────────────────────────────────────────────────────────────────
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  document.querySelector('[data-tab="' + tab + '"]').classList.add('active');
+  el('tab-oobi').style.display = tab === 'oobi' ? '' : 'none';
+  el('tab-connect').style.display = tab === 'connect' ? '' : 'none';
+}
+
+// ── OOBI ─────────────────────────────────────────────────────────────────
+
+async function generateOobi() {
+  var btn = el('generate-oobi-btn');
+  btn.disabled = true; btn.textContent = 'Generating…';
+  try {
+    var data = await apiGet('/api/oobi');
+    el('oobi-text').textContent = data.oobi;
+    el('oobi-display').style.display = '';
+    addEvent('OOBI generated', 'c-info');
+  } catch(e) {
+    showStatus('Failed: '+e.message, 'error');
+  }
+  btn.disabled = false; btn.textContent = 'Generate OOBI';
+}
+
+async function copyOobi() {
+  var oobi = el('oobi-text').textContent;
+  if (!oobi) return;
+  try {
+    await navigator.clipboard.writeText(oobi);
+    el('copy-status').textContent = '✓ Copied!';
+    addEvent('OOBI copied to clipboard', 'c-info');
+  } catch(e) {
+    var ta = document.createElement('textarea');
+    ta.value = oobi; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); el('copy-status').textContent = '✓ Copied!'; } catch(_) {
+      el('copy-status').textContent = '✗ Failed to copy';
+    }
+    document.body.removeChild(ta);
+  }
+}
+
+// ── Connect ──────────────────────────────────────────────────────────────
+
+async function connectToPeer() {
+  var input = el('connect-oobi-input');
+  var statusEl = el('connect-status');
+  var oobi = input.value.trim();
+  if (!oobi) return;
+  statusEl.textContent = 'Connecting…';
+  try {
+    var result = await apiPost('/api/connect', { oobi: oobi });
+    showStatus(result.message || 'Connection initiated', 'success');
+    addEvent(result.message || 'Connection initiated', 'c-connect');
+    input.value = '';
+    statusEl.textContent = '✓ Sent';
+  } catch(e) {
+    // Trigger the ack-required popup on BOTH the stable `code` AND a message
+    // match — the message match covers older servers / module-duplication cases
+    // where the 409 code may not arrive as expected.
+    var isRelationshipExists = e.code === 'RELATIONSHIP_EXISTS' || /^You already have a relationship with/i.test(e.message || '');
+    if (isRelationshipExists) {
+      // Already has an established (verified) relationship — refuse the
+      // duplicate connect (no RFI is sent), require an acknowledgment press,
+      // and reset the paste UI to its pre-paste state.
+      input.value = '';
+      statusEl.textContent = '';
+      showAckModal(e.message || 'You already have a relationship with this peer.');
+      addEvent('Relationship already exists — re-paste of OOBI refused, no RFI sent.', 'c-err');
+      return;
+    }
+    showStatus('Failed: '+e.message, 'error');
+    addEvent('Connect failed: ' + e.message, 'c-err');
+    statusEl.textContent = '';
+  }
+}
+
+// ── Relationships + DTG VRC Status ──────────────────────────────────────
+
+function renderRelationships(rels) {
+  var container = el('relationships');
+  var count = el('rel-count');
+
+  // First, track which rows still exist so per-exchange UI state is cleared
+  // for any row the server reset/expired or removed (a FUTURE brand-new OOBI
+  // exchange then shows the "I know this person" button again). This must run
+  // even when the list has become empty.
+  var renderedNow = {};
+  if (rels) { rels.forEach(function(r){ renderedNow[r.remoteDid] = true; }); }
+  Object.keys(lastRenderedDids).forEach(function(did){
+    if (!renderedNow[did]) {
+      delete ceremonyCompleteLogged[did];
+    }
+  });
+  lastRenderedDids = renderedNow;
+  // A row disappearing IS the server's expiry/removal signal — drop its state.
+  CeremonyPanel.prune(renderedNow);
+
+  if (!rels || !rels.length) {
+    container.innerHTML = '<p class="muted">No relationships yet. Generate your OOBI and share it, or paste a peer\'s OOBI to connect.</p>';
+    count.textContent = '(0)';
+    return;
+  }
+  count.textContent = '(' + rels.length + ')';
+  container.innerHTML = rels.map(function(r){
+    var dirIcon = r.direction === 'bidirectional' ? '⇄' : r.direction === 'outbound' ? '→' : '←';
+    var isEstablished = r.status === 'established';
+    var statusClass = isEstablished ? 'status-connected' : 'status-pending';
+    var vidEnc = encodeURIComponent(r.remoteDid);
+    var canVerify = r.direction === 'bidirectional' && r.status === 'established';
+    return '<div class="rel-item" data-vid="'+r.remoteDid+'">' +
+      '<span class="dir">'+dirIcon+'</span>' +
+      '<span class="vid">'+r.remoteDid.slice(0,32)+'…</span>' +
+      '<span class="status '+statusClass+'">'+r.status+'</span>' +
+      '<span class="vrc-badge vrc-unverified" id="vrc-'+vidEnc+'">🔓</span>' +
+      (canVerify ? ' <a href="chat.html?peer='+vidEnc+'" style="color:#60a5fa;font-size:12px;">Chat →</a>' : '') +
+      // The "I know this person" button and the shared 60s countdown live in this
+      // in-row expansion, rendered from SERVER state by assets/ceremony-panel.js.
+      '<div class="rel-ceremony" id="cer-'+vidEnc+'" style="display:none;"></div>' +
+    '</div>';
+  }).join('');
+  // The poll above recreates every row, so re-render each row's ceremony expansion
+  // from the state already held (the server view refreshes on the status poll —
+  // never from a browser-side timer).
+  rels.forEach(function(r){
+    CeremonyPanel.update(r.remoteDid, { ack: r.ack });
+    CeremonyPanel.render(r.remoteDid, el('cer-'+encodeURIComponent(r.remoteDid)));
+  });
+  // Kick off async ceremony status checks.
+  setTimeout(function(){ rels.forEach(function(r){ loadCeremonyStatus(r.remoteDid); }); }, 100);
+}
+
+async function loadCeremonyStatus(remoteVid) {
+  try {
+    var vidEnc = encodeURIComponent(remoteVid);
+    var badge = el('vrc-'+vidEnc);
+    if (!badge) return;
+    var data = await apiGet('/api/relationships/'+vidEnc+'/ceremony-status');
+    var simply = data.ceremony ? data.ceremony.phase : null;
+    // Feed the in-row ceremony panel. The SERVER view decides everything that
+    // is drawn (button, shared 60s countdown, waiting / creating / cancelled
+    // copy) — this page never derives the window itself.
+    CeremonyPanel.update(remoteVid, {
+      ack: data.ceremony ? data.ceremony.ack : null,
+      phase: simply,
+      failedStep: data.ceremony ? data.ceremony.failedStep : null,
+      lastError: data.ceremony ? data.ceremony.lastError : null,
+    });
+    CeremonyPanel.render(remoteVid, el('cer-'+vidEnc));
+    if (simply === 'complete' || data.personhoodStatus === 'verified') {
+      badge.className = 'vrc-badge vrc-verified';
+      badge.textContent = '🔒 DTG';
+      // A peer-to-peer ceremony completes even with no utility server, so the
+      // DTG label means "exchanged with the peer"; say so when the archive is
+      // still owed to the durable outbox rather than implying it is filed.
+      badge.title = (data.ceremony && data.ceremony.archiveDeferred)
+        ? 'DTG RelationshipCredential issued & exchanged with the peer — utility archive pending (the durable outbox retries it on reconnect)'
+        : 'DTG RelationshipCredential issued & archived';
+      // Complete: the panel hides itself and the DTG label takes over. The final
+      // confirmation line is logged exactly once (it stays as the last line of
+      // the event log).
+      if (!ceremonyCompleteLogged[remoteVid]) {
+        ceremonyCompleteLogged[remoteVid] = true;
+        addEvent('VRC created, relationship confirmed', 'c-connect');
+      }
+    } else if (data.ceremony && data.ceremony.phase === 'failed') {
+      badge.className = 'vrc-badge vrc-failed';
+      badge.textContent = '⚠️';
+      badge.title = 'Ceremony could not complete — failed at step "' +
+        (data.ceremony.failedStep || '?') + '" (' + (data.ceremony.lastError || '') + ').';
+      // The panel renders the failure copy; a fresh OOBI exchange starts over.
+    } else if (data.ceremony && (
+               (data.ceremony.localAcked === true && data.ceremony.remoteAcked === true) ||
+               data.ceremony.phase === 'minting' ||
+               data.ceremony.phase === 'sharing')) {
+      // Both sides confirmed (or the VRC is being issued/shared): the panel is
+      // showing "creating relationship credentials, please wait".
+      badge.textContent = '📨';
+      badge.title = 'Mutual confirmation received — issuing/sharing the DTG RelationshipCredential';
+    } else if (data.personhoodStatus === 'acknowledged') {
+      badge.textContent = '📨';
+      badge.title = 'You acknowledged — waiting for the peer to confirm';
+    } else {
+      badge.textContent = '🔓';
+      badge.title = 'Not verified — click "I know this person" to start the ceremony';
+    }
+  } catch(e) { /* ignore */ }
+}
+
+// ── "I know this person" press ──────────────────────────────────────────────────
+// The button, the countdown and every status message live in
+// assets/ceremony-panel.js, so this page and credentials.html can never
+// disagree about the window. Pressing is one-shot per exchange: the button is
+// hidden immediately and only a fresh OOBI exchange restores it.
+
+function acknowledgePeer(remoteVid) {
+  CeremonyPanel.press(remoteVid);
+}
+
+async function verifyPeer(remoteVid) {
+  var vidEnc = encodeURIComponent(remoteVid);
+  var btn = el('verify-'+vidEnc);
+  if (!btn) return;
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  addEvent('Sending personhood challenge to peer…', 'c-info');
+  try {
+    var result = await apiPost('/api/relationships/'+vidEnc+'/verify', {});
+    showStatus(result.message || 'Challenge sent', 'success');
+    addEvent('Personhood challenge sent. Waiting for response…', 'c-connect');
+  } catch(e) {
+    showStatus('Verification failed: ' + e.message, 'error');
+    addEvent('Verification failed: ' + e.message, 'c-err');
+  }
+  btn.disabled = false; btn.textContent = 'Verify';
+}
+
+// ── Event Log ────────────────────────────────────────────────────────────
+
+function addEvent(msg, cls) {
+  var log = el('event-log');
+  var time = new Date().toLocaleTimeString();
+  log.insertAdjacentHTML('beforeend', '<div class="entry '+cls+'">['+time+'] '+msg+'</div>');
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── Identity load ────────────────────────────────────────────────────────
+
+async function loadIdentity() {
+  try {
+    identData = await apiGet('/api/identity');
+    var container = el('identity');
+    var kindIcon = identData.meta && identData.meta.subjectKind === 'ai_agent' ? '🤖' : '👤';
+    var kindLabel = identData.meta && identData.meta.subjectKind === 'ai_agent' ? 'AI Agent' : 'Human';
+    var delegateInfo = '';
+    if (identData.meta && identData.meta.delegatedBy) {
+      delegateInfo = '<p class="muted">Delegated by: ' + identData.meta.delegatedBy + '</p>';
+    }
+    container.innerHTML = '<p><strong>'+kindIcon+' '+identData.name+'</strong> <span class="muted">('+kindLabel+')</span></p>' +
+      delegateInfo +
+      '<p class="muted">VID: '+identData.vid.slice(0,30)+'…</p>' +
+      '<p class="muted">DID: '+identData.did.slice(0,40)+'…</p>' +
+      '<p class="muted">Peer ID: '+identData.peerId.slice(0,30)+'…</p>' +
+      '<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">' +
+        '<a href="profiles.html" class="copy-btn">👤 Manage Profiles</a>' +
+        '<a href="credentials.html" class="copy-btn">📜 Credentials</a>' +
+        '<a href="chat.html" class="copy-btn">💬 Chat</a>' +
+      '</div>';
+  } catch(e) {
+    el('identity').textContent = 'Error loading identity: ' + e.message;
+  }
+}
+
+// ── Poll for relationship changes ────────────────────────────────────────
+
+var shownNoticeKeys = {};
+
+async function pollRelationships() {
+  try {
+    var rels = await apiGet('/api/relationships');
+    // Surface any pending duplicate-connect notice delivered over the poll
+    // (one-shot: the server consumes it once read). High-availability path —
+    // works even when SSE is unavailable or the browser missed an event.
+    rels.forEach(function (r) {
+      if (r.notice) {
+        var key = (r.remoteDid || '') + ':' + r.notice.at;
+        if (shownNoticeKeys[key]) return;
+        shownNoticeKeys[key] = true;
+        var who = (r.notice.remoteName && String(r.notice.remoteName).trim())
+          ? String(r.notice.remoteName).trim()
+          : (String(r.remoteDid || '').slice(0, 24) + '…');
+        showAckModal('You already have a relationship with ' + who + '.');
+        addEvent('Peer attempted a duplicate OOBI connect — relationship already exists.', 'c-err');
+      }
+    });
+    var snapshot = JSON.stringify(rels);
+    if (snapshot !== lastRelSnapshot) {
+      renderRelationships(rels);
+      lastRelSnapshot = snapshot;
+    } else {
+      // Even when the relationship list snapshot is unchanged, the ceremony
+      // saga can advance server-side without mutating /api/relationships
+      // (e.g. the "I know this person" exchange finalizes and the VRC is
+      // issued). Keep polling each peer's ceremony status so the DTG badge
+      // appears and the "I know this person" button is removed automatically
+      // within ~2s — no manual browser refresh needed.
+      rels.forEach(function (r) { loadCeremonyStatus(r.remoteDid); });
+    }
+  } catch(e) { /* ignore */ }
+}
+
+
+function escapeHtml(s) {
+  var d = document.createElement("div");
+  d.textContent = s || "";
+  return d.innerHTML;
+}
+
+// ── Communities summary ──────────────────────────────────────────────────
+
+async function loadCommunitiesSummary() {
+  try {
+    var list = await apiGet('/api/communities');
+    var el2 = el('communities-summary');
+    var countEl = el('comm-count');
+    if (!list || list.length === 0) {
+      el2.innerHTML = '<p class="muted">No communities yet.</p><p class="muted"><a href="communities.html">Browse communities →</a></p>';
+      countEl.textContent = '(0)';
+      return;
+    }
+    countEl.textContent = '(' + list.length + ')';
+    var items = list.slice(0, 5).map(function(c) {
+      // The founding admins ARE the community's admins. `adminThresholdN` is the
+      // admin COUNT; `adminThresholdM` is the separate change-approval quorum
+      // (a Rules-page concern), never a class of admin.
+      var admins = c.adminThresholdN
+        ? ' <span class="muted" style="font-size:10px;">' + c.adminThresholdN + ' admin' + (c.adminThresholdN === 1 ? '' : 's') + '</span>'
+        : '';
+      return '<div style="padding:4px 0; border-bottom:1px solid #1a1f2e;">' +
+        '<span style="color:#60a5fa;">🏛</span> ' +
+        escapeHtml(c.name || '(unnamed)') +
+        ' <span class="muted" style="font-size:11px;">' + (c.role || 'vtc').toUpperCase() + '</span>' +
+        admins +
+        '</div>';
+    }).join('');
+    if (list.length > 5) items += '<div class="muted" style="font-size:11px; padding-top:4px;">+ ' + (list.length - 5) + ' more</div>';
+    el2.innerHTML = items + '<p style="margin-top:8px;"><a href="communities.html" class="copy-btn">View all communities →</a></p>';
+  } catch(e) {
+    el('communities-summary').innerHTML = '<p class="muted">Unable to load: ' + escapeHtml(e.message) + '</p>';
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────
+
+async function init() {
+  var active = await requireActiveAgent();
+  if (!active) return;
+
+  await loadIdentity();
+  loadCommunitiesSummary();
+  try {
+    var rels = await apiGet('/api/relationships');
+    renderRelationships(rels);
+    lastRelSnapshot = JSON.stringify(rels);
+  } catch(e) { /* ignore */ }
+  // No timer: `relationship-changed` and the ceremony pushes re-run `pollRelationships` / `loadCeremonyStatus`
+  // exactly when something actually changed.
+}
+
+init();
+</script>
+</body>
+</html>

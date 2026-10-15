@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en" data-page="graph">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Trust Agent — Trust Graph</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="/lib/cytoscape.min.js"></script>
+<style>
+  :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --muted: #8b949e;
+           --blue: #58a6ff; --green: #3fb950; --amber: #d2991d; --purple: #bc8cff; --red: #f85149; --gray: #6e7681; }
+  #main-content { display: flex; height: 100vh; }
+  #cy { flex: 1; min-width: 0; background: #0a0e17; }
+  #panel { width: 340px; background: var(--card); border-left: 1px solid var(--border); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+  #panel h3 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .filter-group { display: flex; flex-direction: column; gap: 6px; }
+  .filter-group label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; color: var(--text); }
+  .filter-group input[type="checkbox"] { accent-color: var(--blue); }
+  .btn { padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 13px; background: var(--card); color: var(--text); }
+  .btn:hover { background: #21262d; }
+  .btn-primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .btn-primary:hover { background: #388bfd; }
+  #legend { font-size: 11px; color: var(--muted); line-height: 1.8; }
+  #legend span { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  #legend .sw-rel { background: #6e7681; } #legend .sw-cred { background: #3fb950; } #legend .sw-del { background: #f85149; }
+  #legend .sw-vmc { background: #58a6ff; } #legend .sw-vec { background: #bc8cff; }
+  /* Shape legend mirrors the node shapes: VTC = pentagon, VTN = hexagon. */
+  #legend .sw-node { display: inline-block; width: 12px; height: 12px; margin-right: 4px; vertical-align: middle; background: #3fb950; }
+  #legend .sw-node-vtc { clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%); }
+  #legend .sw-node-vtn { background: #f59e0b; clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); }
+  #legend .sw-dashed { display: inline-block; width: 20px; height: 0; border-top: 2px dashed #8b949e; margin: 0 4px; vertical-align: middle; }
+  #legend .sw-solid { display: inline-block; width: 20px; height: 0; border-top: 2px solid #8b949e; margin: 0 4px; vertical-align: middle; }
+  #info-card { font-size: 12px; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px; display: none; }
+  #info-card .key { color: var(--muted); } #info-card .val { color: var(--text); font-family: monospace; word-break: break-all; }
+  #info-card pre { white-space: pre-wrap; word-break: break-word; font-family: monospace; font-size: 11px; color: var(--text); margin: 4px 0 0; }
+  .stats { font-size: 12px; color: var(--muted); display: flex; gap: 16px; }
+  .stats strong { color: var(--text); }
+  .error-banner { background: #7f1d1d; color: #fca5a5; padding: 10px 14px; border-radius: 6px; display: none; font-size: 13px; }
+  #search-input { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: #0d1117; color: var(--text); font-size: 13px; }
+  @media (max-width: 768px) { #main-content { flex-direction: column; } #panel { width: 100%; border-left: none; border-top: 1px solid var(--border); max-height: 50%; } }
+</style>
+</head>
+<body data-page="graph">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div id="main-content">
+  <div id="cy"></div>
+  <div id="panel">
+    <div id="error" class="error-banner"></div>
+    <div class="stats" id="stats">
+      <span>Nodes: <strong id="stat-nodes">0</strong></span>
+      <span>Edges: <strong id="stat-edges">0</strong></span>
+      <span>Cred: <strong id="stat-creds">0</strong></span>
+      <span>Del: <strong id="stat-dels">0</strong></span>
+      <span>Peer: <strong id="stat-peers">0</strong></span>
+    </div>
+    <input type="text" id="search-input" placeholder="Search identity…" oninput="searchGraph(this.value)">
+    <div>
+      <h3>Filters</h3>
+      <div class="filter-group">
+        <label><input type="checkbox" checked onchange="applyFilters()" data-kind="credential"> Credentials</label>
+        <label><input type="checkbox" checked onchange="applyFilters()" data-kind="delegation"> Delegations</label>
+        <label><input type="checkbox" checked onchange="applyFilters()" data-kind="peer"> Peer Connections</label>
+        <label><input type="checkbox" checked onchange="applyFilters()" data-status="pending"> Show Pending</label>
+        <label><input type="checkbox" checked onchange="applyFilters()" data-org="true"> Show Organizations</label>
+      </div>
+    </div>
+    <div>
+      <button class="btn btn-primary" onclick="reloadGraph()">🔄 Reload</button>
+      <button class="btn" onclick="fitGraph()">🔍 Fit View</button>
+    </div>
+    <div id="info-card"><h3 style="margin-bottom:6px;">Details</h3><div id="info-body"></div></div>
+    <div id="legend">
+      <h3>Legend</h3>
+      <div><span class="sw-rel"></span> Peer connection (no VRC yet)</div>
+      <div><span class="sw-cred"></span> VRC (relationship credential)</div>
+      <div><span class="sw-vmc"></span> VMC (membership credential: VTC → member)</div>
+      <div><span class="sw-vec"></span> VEC (endorsement credential)</div>
+      <div><span class="sw-del"></span> Delegation edge</div>
+      <div><span class="sw-node sw-node-vtc"></span> VTC (pentagon) &nbsp; <span class="sw-node sw-node-vtn"></span> VTN (hexagon)</div>
+      <div><span class="sw-solid"></span> Established</div>
+      <div><span class="sw-dashed"></span> Pending</div>
+      <div style="margin-top:4px;">Node colors: <span style="color:#58a6ff;">●</span> Human &nbsp; <span style="color:#d2991d;">●</span> Org &nbsp; <span style="color:#bc8cff;">●</span> AI &nbsp; <span style="color:#6e7681;">●</span> Object</div>
+    </div>
+  </div>
+</div>
+
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+let cy;
+
+function showError(msg) {
+  var el = document.getElementById('error');
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+function clearError() { document.getElementById('error').style.display = 'none'; }
+
+function getNodeColor(subjectKind) {
+  switch (subjectKind) {
+    case 'human': return '#58a6ff';
+    case 'organization': return '#d2991d';
+    case 'ai_agent': return '#bc8cff';
+    case 'object': return '#6e7681';
+    default: return '#8b949e';
+  }
+}
+
+// Community nodes are shaped by governance role (mirrors the utility server's
+// graph: a VTC is a pentagon, a VTN a hexagon); everyone else is an ellipse.
+function getNodeShape(role) {
+  switch (role) {
+    case 'vtn': return 'hexagon';
+    case 'vtc': return 'pentagon';
+    default: return 'ellipse';
+  }
+}
+
+function buildGraph(data) {
+  var elements = [];
+
+  for (var i = 0; i < data.nodes.length; i++) {
+    var n = data.nodes[i];
+    var color = n.isSelf ? '#ffffff' : getNodeColor(n.subjectKind);
+    elements.push({
+      group: 'nodes',
+      data: {
+        id: n.id, label: n.label, role: n.role,
+        subjectKind: n.subjectKind, isSelf: n.isSelf,
+        identityUuid: n.identityUuid || n.id,
+        did: n.did || '',
+        members: n.members || [],
+        bgColor: color,
+        borderColor: n.isSelf ? '#ffffff' : color,
+        borderW: n.isSelf ? 3 : 1.5,
+        nodeShape: getNodeShape(n.role),
+        nw: n.isSelf ? 45 : 35,
+        nh: n.isSelf ? 45 : 35
+      }
+    });
+  }
+
+  for (var j = 0; j < data.edges.length; j++) {
+    var e = data.edges[j];
+    var isPending = e.status === 'pending' || e.direction === 'pending';
+    var lineStyle = e.kind === 'peer' ? (isPending ? 'dashed' : 'dotted') : (isPending ? 'dashed' : 'solid');
+    var color = '#6e7681';
+    if (e.kind === 'credential') color = '#3fb950';
+    else if (e.kind === 'delegation') color = '#f85149';
+    // Community credentials are coloured by type so a membership credential
+    // (VMC, the VTC → member line) is distinguishable from a relationship
+    // credential (VRC) at a glance. Mirrors the utility server's edge palette.
+    if (e.kind === 'credential' && e.vcType === 'vmc') color = '#58a6ff';
+    else if (e.kind === 'credential' && e.vcType === 'vec') color = '#bc8cff';
+    var hasArrow = e.kind === 'credential' || e.kind === 'delegation';
+    // A VRC (peer-relationship) credential is inherently mutual — each side
+    // mints its own VRC for the other, so the pair is a two-way trust
+    // relationship. The local store therefore holds TWO 'vrc' rows for the
+    // same pair (our self-minted row, plus the peer's mirrored copy received
+    // via store_remote_vrc); GET /api/graph collapses those into a single
+    // mutual edge so only one line is drawn per pair. Show arrowheads on
+    // both ends to reflect the mutual relationship, unlike one-directional
+    // delegation edges (principal -> dependent).
+    var isMutualVrc = e.kind === 'credential' && e.vcType === 'vrc';
+    elements.push({
+      group: 'edges',
+      data: {
+        id: e.id, source: e.source, target: e.target,
+        kind: e.kind, label: e.label || '',
+        direction: e.direction || '', status: e.status || '',
+        personhoodStatus: e.personhoodStatus || '',
+        vcType: e.vcType || '', relationshipType: e.relationshipType || '',
+        claim: e.claim || '', validFrom: e.validFrom || 0,
+        validUntil: e.validUntil || 0, thresholdRequired: e.thresholdRequired,
+        lineColor: color, lineStyle: lineStyle,
+        targetArrowColor: hasArrow ? color : '',
+        targetArrowShape: hasArrow ? 'triangle' : 'none',
+        sourceArrowColor: isMutualVrc ? color : '',
+        sourceArrowShape: isMutualVrc ? 'triangle' : 'none',
+        ew: e.kind === 'peer' ? 1.5 : (e.kind === 'delegation' ? 1.8 : 2),
+        curveStyle: e.kind === 'credential' ? 'bezier' : 'haystack'
+      }
+    });
+  }
+
+  return elements;
+}
+
+function initCytoscape(data) {
+  var elements = buildGraph(data);
+  cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements: elements,
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'background-color': 'data(bgColor)',
+          'border-color': 'data(borderColor)',
+          'border-width': 'data(borderW)',
+          'shape': 'data(nodeShape)',
+          'width': 'data(nw)',
+          'height': 'data(nh)',
+          'label': 'data(label)',
+          'font-size': '10px',
+          'color': '#c9d1d9',
+          'text-valign': 'bottom',
+          'text-halign': 'center',
+          'text-margin-y': 6,
+          'text-background-color': '#0d1117',
+          'text-background-opacity': 0.8,
+          'text-background-padding': '2px'
+        }
+      },
+      {
+        selector: 'edge',
+        style: {
+          'line-color': 'data(lineColor)',
+          'line-style': 'data(lineStyle)',
+          'target-arrow-color': 'data(targetArrowColor)',
+          'target-arrow-shape': 'data(targetArrowShape)',
+          'source-arrow-color': 'data(sourceArrowColor)',
+          'source-arrow-shape': 'data(sourceArrowShape)',
+          'width': 'data(ew)',
+          'curve-style': 'data(curveStyle)',
+          'label': 'data(label)',
+          'font-size': '9px',
+          'color': 'data(lineColor)',
+          'text-background-color': '#0d1117',
+          'text-background-opacity': 0.9,
+          'text-background-padding': '2px'
+        }
+      },
+      {
+        selector: ':selected',
+        style: { 'border-color': '#ffffff', 'border-width': 3 }
+      }
+    ],
+    layout: { name: 'cose', animate: false, padding: 40, nodeRepulsion: 8000, idealEdgeLength: 120, edgeElasticity: 0.3, gravity: 0.2 }
+  });
+
+  cy.on('tap', 'node', function(evt) {
+    var node = evt.target;
+    var d = node.data();
+    var card = document.getElementById('info-card');
+    var body = document.getElementById('info-body');
+    card.style.display = 'block';
+    var html =
+      '<div><span class="key">Label:</span> <span class="val">' + escapeHtml(d.label) + '</span></div>' +
+      '<div><span class="key">Role:</span> <span class="val">' + escapeHtml(d.role || 'vta') + '</span></div>' +
+      '<div><span class="key">Subject Kind:</span> <span class="val">' + escapeHtml(d.subjectKind || '?') + '</span></div>' +
+      '<div><span class="key">Is Self:</span> <span class="val">' + (d.isSelf ? 'yes' : 'no') + '</span></div>' +
+      '<div><span class="key">DID:</span> <span class="val" title="' + escapeHtml(d.did || '') + '">' + escapeHtml(shortDid(d.did)) + '</span></div>';
+    if (d.members && d.members.length > 0) {
+      html += '<div style="margin-top:6px;"><span class="key">Members:</span></div>';
+      for (var i = 0; i < d.members.length; i++) {
+        var m = d.members[i];
+        html += '<div style="padding-left:10px;"><span class="val">• ' + escapeHtml(m.label || ('#' + String(m.uuid || '').slice(0, 8))) +
+          (m.role ? ' <span class="key">(' + escapeHtml(m.role) + ')</span>' : '') + '</span></div>';
+      }
+    }
+    body.innerHTML = html;
+  });
+
+  cy.on('tap', 'edge', function(evt) {
+    var edge = evt.target;
+    var d = edge.data();
+    var card = document.getElementById('info-card');
+    var body = document.getElementById('info-body');
+    card.style.display = 'block';
+    var html = '<div><span class="key">Type:</span> <span class="val">' + escapeHtml(d.kind || '') + '</span></div>';
+    if (d.vcType) html += '<div><span class="key">Credential Type:</span> <span class="val">' + escapeHtml(d.vcType) + '</span></div>';
+    if (d.relationshipType) html += '<div><span class="key">Relationship:</span> <span class="val">' + escapeHtml(d.relationshipType) + '</span></div>';
+    if (d.status) html += '<div><span class="key">Status:</span> <span class="val">' + escapeHtml(d.status) + '</span></div>';
+    if (d.claim) html += '<div style="margin-top:6px;"><span class="key">Claim:</span></div><pre>' + escapeHtml(formatClaim(d.claim)) + '</pre>';
+    if (d.validFrom) html += '<div><span class="key">Valid From:</span> <span class="val">' + formatEpoch(d.validFrom) + '</span></div>';
+    if (d.validUntil) html += '<div><span class="key">Valid Until:</span> <span class="val">' + formatEpoch(d.validUntil) + '</span></div>';
+    if (d.thresholdRequired !== undefined && d.thresholdRequired !== null && d.thresholdRequired !== '') {
+      html += '<div><span class="key">Threshold:</span> <span class="val">' + escapeHtml(String(d.thresholdRequired)) + '</span></div>';
+    }
+    body.innerHTML = html;
+  });
+
+  cy.on('tap', function(evt) {
+    if (evt.target === cy) {
+      document.getElementById('info-card').style.display = 'none';
+    }
+  });
+
+  updateStats(data);
+}
+
+function applyFilters() {
+  if (!cy) return;
+  var showCred = document.querySelector('input[data-kind="credential"]').checked;
+  var showDel = document.querySelector('input[data-kind="delegation"]').checked;
+  var showPeer = document.querySelector('input[data-kind="peer"]').checked;
+  var showPending = document.querySelector('input[data-status="pending"]').checked;
+  var showOrgs = document.querySelector('input[data-org="true"]').checked;
+
+  cy.batch(function() {
+    cy.edges().forEach(function(edge) {
+      var k = edge.data('kind');
+      var status = edge.data('status');
+      var visible = true;
+      if (k === 'peer' && !showPeer) visible = false;
+      if (k === 'credential' && !showCred) visible = false;
+      if (k === 'delegation' && !showDel) visible = false;
+      if (status === 'pending' && !showPending) visible = false;
+      edge.style('display', visible ? 'element' : 'none');
+    });
+    cy.nodes().forEach(function(node) {
+      if (node.data('isSelf')) { node.style('display', 'element'); return; }
+      if (!showOrgs && node.data('subjectKind') === 'organization') {
+        node.style('display', 'none');
+        return;
+      }
+      var connectedEdges = node.connectedEdges();
+      // Keep standalone nodes (no edges at all) visible; only hide nodes
+      // whose edges are all hidden by filters.
+      var hasVisible = connectedEdges.length === 0 || connectedEdges.some(function(e) { return e.style('display') !== 'none'; });
+      node.style('display', hasVisible ? 'element' : 'none');
+    });
+  });
+}
+
+function searchGraph(query) {
+  if (!cy) return;
+  var q = query.trim().toLowerCase();
+  cy.nodes().forEach(function(n) {
+    if (!q) { n.style('display', 'element'); return; }
+    var label = (n.data('label') || '').toLowerCase();
+    var uuid = (n.data('identityUuid') || '').toLowerCase();
+    var did = (n.data('did') || '').toLowerCase();
+    n.style('display', (label.indexOf(q) >= 0 || uuid.indexOf(q) >= 0 || did.indexOf(q) >= 0) ? 'element' : 'none');
+  });
+  if (!q) applyFilters();
+}
+
+function fitGraph() { if (cy) { cy.fit(); cy.center(); } }
+
+function updateStats(data) {
+  document.getElementById('stat-nodes').textContent = data.nodes.length;
+  document.getElementById('stat-edges').textContent = data.edges.length;
+  document.getElementById('stat-creds').textContent = data.edges.filter(function(e) { return e.kind === 'credential'; }).length;
+  document.getElementById('stat-dels').textContent = data.edges.filter(function(e) { return e.kind === 'delegation'; }).length;
+  document.getElementById('stat-peers').textContent = data.edges.filter(function(e) { return e.kind === 'peer'; }).length;
+}
+
+async function reloadGraph() {
+  clearError();
+  try {
+    var res = await fetch('/api/graph');
+    if (!res.ok) throw new Error('GET /api/graph failed: ' + res.status);
+    var data = await res.json();
+    if (cy) cy.destroy();
+    initCytoscape(data);
+  } catch (err) {
+    showError('Failed to load trust graph: ' + err.message);
+  }
+}
+
+function escapeHtml(str) {
+  var div = document.createElement('div');
+  div.textContent = str || '';
+  return div.innerHTML;
+}
+
+// Compact a DID for display. A did:peer:4 DID embeds the entire encoded DID
+// document in its method-specific id, so the raw value runs to thousands of
+// characters (e.g. did:peer:4zQm…:zsHK4…). The trust graph shows the method's
+// short form instead — everything up to the first colon that follows the
+// "did:peer:4" prefix (did:peer:4zQm…), matching the tidy did:scid:vh a VTA
+// node already shows. DIDs of any other method (and a did:peer:4 with no such
+// colon) are returned unchanged.
+function shortDid(did) {
+  var s = String(did || '');
+  var prefix = 'did:peer:4';
+  if (s.indexOf(prefix) === 0) {
+    var colon = s.indexOf(':', prefix.length);
+    if (colon > 0) return s.slice(0, colon);
+  }
+  return s;
+}
+
+// Pretty-print a credential claim for the info card (it is stored as a JSON
+// string in the credentials table). Falls back to the raw string on parse
+// errors.
+function formatClaim(claim) {
+  if (!claim) return '';
+  try {
+    var parsed = JSON.parse(claim);
+    return JSON.stringify(parsed, null, 2);
+  } catch (e) {
+    return claim;
+  }
+}
+
+// Format an epoch-seconds timestamp as a human-readable local string.
+function formatEpoch(epoch) {
+  var n = Number(epoch);
+  if (!n) return '';
+  var d = new Date(n * 1000);
+  return isNaN(d.getTime()) ? String(epoch) : d.toLocaleString();
+}
+
+reloadGraph();
+window.addEventListener('resize', function() { if (cy) cy.resize(); });
+</script>
+</body>
+</html>

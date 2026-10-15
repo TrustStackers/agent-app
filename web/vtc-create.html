@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en" data-page="vtc-create">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create Community — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .wizard-step { }
+  .wizard-step[hidden] { display: none; }
+  .two-col { display: flex; gap: 20px; flex-wrap: wrap; }
+  .two-col > * { flex: 1; min-width: 320px; }
+  .entity-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; margin-bottom: 6px; }
+  .entity-row .name { font-weight: 600; }
+  .entity-row .meta { font-size: 12px; color: #94a3b8; }
+  .spacer { flex: 1; }
+  .badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-left: 4px; }
+  .result-msg { padding: 12px 16px; border-radius: 6px; margin: 12px 0; display: none; }
+  .result-msg.show { display: block; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+  .checkbox-row input { margin: 0; }
+  .name-status { font-size: 12px; margin-left: 8px; }
+  .name-status.available { color: #34d399; }
+  .name-status.taken { color: #f87171; }
+  .name-status.checking { color: #fbbf24; }
+</style>
+</head>
+<body data-page="vtc-create">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div id="status-area"></div>
+
+  <div class="two-col">
+    <!-- Left: 3-step wizard -->
+    <div>
+      <div class="card">
+        <h2>Create Community</h2>
+        <div id="error" style="display:none; background:#7f1d1d; color:#fca5a5; padding:10px 14px; border-radius:6px; margin-bottom:12px;"></div>
+        <form id="vtc-form">
+          <!-- Step 1: Parent VTN (optional) -->
+          <div class="wizard-step" id="step-1">
+            <div class="form-group">
+              <label>Parent VTN <span class="muted" style="font-size:11px;">(optional — VTNs can be parents to VTCs)</span></label>
+              <select id="parent-vtn" style="width:100%; background:#0a0e17; border:1px solid #1e2535; border-radius:4px; color:#e0e6ed; padding:8px;">
+                <option value="">None — standalone VTC</option>
+              </select>
+              <div id="kind-hint" class="muted" style="font-size:12px; margin-top:4px;">You are creating a Verified Trust Community (VTC). Optionally nest it inside an existing Verified Trust Network (VTN).</div>
+            </div>
+            <button type="button" class="btn btn-primary" onclick="nextStep(2)">Next →</button>
+          </div>
+
+          <!-- Step 2: Community Name -->
+          <div class="wizard-step" id="step-2" hidden>
+            <div class="form-group">
+              <label>Community Name</label>
+              <input id="vtc-name" placeholder="e.g. Riverside Book Club" style="width:100%; background:#0a0e17; border:1px solid #1e2535; border-radius:4px; color:#e0e6ed; padding:8px;">
+              <span id="name-status" class="name-status" style="margin-top:4px; display:block;"></span>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button type="button" class="btn btn-outline" onclick="prevStep(1)">← Back</button>
+              <button type="button" class="btn btn-primary" id="next-btn-step2" onclick="nextStep(3)">Next →</button>
+            </div>
+          </div>
+
+          <!-- Step 3: Approver Threshold, then Founding Admins -->
+          <div class="wizard-step" id="step-3" hidden>
+            <div class="form-group">
+              <label for="vtc-founding-admins">Number of Founding Admins</label>
+              <input id="vtc-founding-admins" type="number" min="1" value="2" style="width:80px; background:#0a0e17; border:1px solid #1e2535; border-radius:4px; color:#e0e6ed; padding:6px;">
+              <div class="hint muted" style="font-size:11px;">How many founding admins this community should have (including you). <strong>At least 2 is recommended</strong>; set it to <strong>1</strong> to create the community by yourself, or add more if you invite additional co-founders below.</div>
+            </div>
+
+            <div class="form-group" style="margin-top:12px;">
+              <label>Founding Admins <span class="muted" style="font-size:11px;">(select yourself + VRC-connected VTAs)</span></label>
+              <div id="admin-checklist"></div>
+              <div id="admin-hint" class="muted" style="font-size:11px; margin-top:4px;">Select as many founding admins as you set above — yourself plus VRC-connected co-admins.</div>
+            </div>
+
+            <div id="governance-banner" style="display:none; margin-top:12px; padding:10px 14px; border-radius:6px; font-size:13px;"></div>
+
+            <div style="display:flex; gap:8px; margin-top:12px;">
+              <button type="button" class="btn btn-outline" onclick="prevStep(2)">← Back</button>
+              <button type="button" class="btn btn-primary" id="create-btn" onclick="submitForm()">Create Community →</button>
+            </div>
+          </div>
+        </form>
+
+        <div id="create-result" class="result-msg"></div>
+      </div>
+    </div>
+
+    <!-- Right: Existing Communities + Next Steps -->
+    <div>
+      <div class="card">
+        <h3>Existing Communities</h3>
+        <div id="vtc-list">Loading...</div>
+      </div>
+      <div class="card">
+        <h3>Pending Approvals</h3>
+        <div id="pending-ceremonies"><p class="muted">Loading...</p></div>
+        <p class="muted" style="font-size:11px; margin-top:6px;">Communities you were named a founding admin of that still need your co-signature. Each approval is a real Ed25519 signature the server verifies before crystallizing.</p>
+      </div>
+      <div class="card">
+        <h3>Next Steps</h3>
+        <ul class="muted" style="margin-left:1.2rem; font-size:0.9rem;">
+          <li><a href="invitations.html">Accept community invitations</a></li>
+          <li><a href="communities.html">Manage membership &amp; governance</a></li>
+          <li><a href="credentials.html">Issue &amp; view credentials</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  </div>
+
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+var myDid = null;
+var lastNameCheckAt = null;
+var currentStep = 1;
+
+function $(id){ return document.getElementById(id); }
+function esc(s){ var d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+async function apiGet(p) { var r = await fetch(p); var d = await r.json().catch(function(){ return null; }); if(!r.ok) throw new Error((d && (d.error && d.error.message || d.error || d.message)) || 'HTTP ' + r.status); return d; }
+async function apiPost(p,b) { var r = await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); var d = await r.json(); if(!r.ok) throw new Error(d.error?.message||d.message||'HTTP '+r.status); return d; }
+
+async function loadIdentity() {
+  try { var i = await apiGet('/api/identity'); myDid = i.did; } catch(e){}
+}
+
+// ── Step navigation ───────────────────────────────────────────────────
+function showStep(n) {
+  for (var i = 1; i <= 3; i++) {
+    var el = $('step-' + i);
+    if (el) el.hidden = (i !== n);
+  }
+  currentStep = n;
+  if (n === 3) loadAdminChecklist();
+}
+
+function nextStep(n) {
+  if (currentStep === 2) {
+    var name = $('vtc-name').value.trim();
+    if (!name) { showError('Please enter a community name.'); return; }
+
+    // 3-second cooldown between attempts — prevents stacking a burst of
+    // name-check round trips on a flaky TSP connection.
+    var now = Date.now();
+    if (lastNameCheckAt && now - lastNameCheckAt < 3000) {
+      showError('Please wait a moment before checking the name again.');
+      return;
+    }
+    lastNameCheckAt = now;
+
+    // Run a FRESH availability check on Next press; only proceed if available.
+    var nextBtn = $('next-btn-step2');
+    if (nextBtn) nextBtn.disabled = true;
+    checkNameAvailability().then(function (ok) {
+      if (nextBtn) {
+        nextBtn.textContent = 'Next →';
+        setTimeout(function () { nextBtn.disabled = false; }, 3000);
+      }
+      if (!ok) {
+        var st = ($('name-status').textContent || '').replace(/^[✓✗]\s*/, '');
+        showError(st || 'Name is not available.');
+        return;
+      }
+      showStep(3);
+    });
+    return;
+  }
+  showStep(n);
+}
+
+function prevStep(n) { showStep(n); }
+function showError(msg) {
+  var el = $('error');
+  el.style.display = 'block';
+  el.textContent = msg;
+}
+
+// ── Name availability check (on-demand, network round-trip) ──────────
+// Returns true when the name is confirmed available, false otherwise.
+// A transport/network failure resolves false too, but the status text then
+// says "Utility server unavailable" (distinct from "already taken").
+async function checkNameAvailability() {
+  var name = $('vtc-name').value.trim();
+  var status = $('name-status');
+  if (!name) { status.textContent = ''; status.className = 'name-status'; updateCreateButton(); return false; }
+  status.textContent = 'Checking ...';
+  status.className = 'name-status checking';
+  updateCreateButton();
+  try {
+    var r = await apiGet('/api/vtcs/check-name?name=' + encodeURIComponent(name));
+    if (r.available) {
+      status.textContent = '✓ Name is available.';
+      status.className = 'name-status available';
+      updateCreateButton();
+      return true;
+    }
+    status.textContent = '✗ ' + (r.message || 'Name is unavailable.');
+    status.className = 'name-status taken';
+    updateCreateButton();
+    return false;
+  } catch (e) {
+    status.textContent = '✗ ' + (e.message || 'Utility server unavailable.');
+    status.className = 'name-status taken';
+    updateCreateButton();
+    return false;
+  }
+}
+
+// ── Centralized create-button state machine ─────────────────────────────
+// The button is enabled ONLY when every precondition is satisfied:
+//  1. a name has been entered AND confirmed available by the utility server
+//  2. enough founding admins are checked (>= min for the chosen kind)
+//  3. the utility server is reachable (name check succeeded, not in error state)
+function updateCreateButton() {
+  var btn = $('create-btn');
+  if (!btn) return;
+
+  var required = parseInt(($('vtc-founding-admins') || {}).value, 10) || 1;
+  var name = ($('vtc-name').value || '').trim();
+  var statusText = ($('name-status').textContent || '').trim();
+
+  var nameOk = name.length > 0
+    && statusText.indexOf('✓ Name is available') >= 0;
+
+  var checked = document.querySelectorAll('#admin-checklist input:checked');
+  var adminCount = checked.length;
+
+  var adminsOk = adminCount >= required;
+
+  btn.disabled = !(nameOk && adminsOk);
+  if (!btn.disabled) btn.textContent = 'Create Community →';
+}
+
+// ── Admin checklist ────────────────────────────────────────────────────
+async function loadAdminChecklist() {
+  var el = $('admin-checklist');
+  var hint = $('admin-hint');
+  var banner = $('governance-banner');
+  var btn = $('create-btn');
+  var countInput = $('vtc-founding-admins');
+
+  el.innerHTML = '<p class="muted">Loading eligible VTAs...</p>';
+  if (btn) btn.disabled = true;
+
+  try {
+    var candidates = await apiGet('/api/admin-candidates');
+    if (!candidates || candidates.length === 0) {
+      el.innerHTML = '<p style="color:#f87171; font-size:12px;">No identities available.</p>';
+      return;
+    }
+
+    var creator = candidates[0];
+    var coAdmins = candidates.slice(1);
+
+    var html = '<label class="checkbox-row"><input type="checkbox" value="' + encodeURIComponent(creator.uuid || '') + '" checked> ' +
+      '<strong>' + esc(creator.name || '(you)') + '</strong> ' +
+      '<span style="font-size:10px; color:#fbbf24;">(you — founding admin)</span></label>';
+
+    if (coAdmins.length > 0) {
+      html += '<div style="border-top:1px solid #1e2535; margin:4px 0; padding-top:4px; font-size:11px; color:#64748b;">VRC-connected co-admins:</div>';
+      html += coAdmins.map(function(c) {
+        return '<label class="checkbox-row"><input type="checkbox" value="' + encodeURIComponent(c.uuid || '') + '">' +
+          esc(c.name || '(unnamed)') + ' <code style="font-size:10px; color:#64748b;">' + esc((c.did || '').slice(0,16)) + '...</code></label>';
+      }).join('');
+    } else {
+      html += '<p style="font-size:12px; color:#fbbf24; margin:6px 0;">' +
+        '⚠ No VRC-connected co-admins found. Set the number of founding admins to 1 to create this ' +
+        'community on your own, or establish a VRC with another VTA via the Dashboard first.</p>';
+    }
+
+    el.innerHTML = html;
+    if (hint) hint.style.display = 'block';
+
+    // The number of founding admins can be at most the number of eligible VTAs.
+    if (countInput) countInput.max = candidates.length;
+    syncFoundingCount();
+
+    // Show governance guidance
+    banner.style.display = 'block';
+    if (coAdmins.length >= 1) {
+      banner.style.background = '#0a1a0a';
+      banner.style.border = '1px solid #34d399';
+      banner.style.color = '#34d399';
+      banner.textContent = 'Select yourself plus enough VRC-connected co-admins to reach the number of founding admins you set above.';
+    } else {
+      banner.style.background = '#1a1a0a';
+      banner.style.border = '1px solid #fbbf24';
+      banner.style.color = '#fbbf24';
+      banner.textContent = 'No VRC-connected co-admins found. You can still create this community on your own by setting the number of founding admins to 1, or establish a VRC with another VTA (Dashboard → Connect) first.';
+    }
+
+    // Re-evaluate the create button when the selection changes.
+    el.addEventListener('change', updateCreateButton);
+
+  } catch(e) {
+    el.innerHTML = '<p style="color:#f87171;">Failed to load: ' + esc(e.message) + '</p>';
+  } finally {
+    // Centralized state machine evaluates name availability + admin selection.
+    updateCreateButton();
+  }
+}
+
+function syncFoundingCount() {
+  var t = $('vtc-founding-admins');
+  if (!t) return;
+  var available = document.querySelectorAll('#admin-checklist input').length;
+  t.min = 1;
+  t.max = available > 0 ? available : 1;
+  var v = parseInt(t.value, 10);
+  if (isNaN(v) || v < 1) v = 2;          // recommended default
+  if (v > t.max) v = t.max;
+  if (v < 1) v = 1;
+  t.value = v;
+  updateCreateButton();
+}
+
+// ── VTC list ───────────────────────────────────────────────────────────
+// Resolve the founding-admin display names from the memberships/identities
+// DB source — exactly the same data path the Communities → View Details
+// panel (/api/community-detail) uses. The governance doc's adminVids blob
+// is unreliable for names, so we fall back to it only when the detail
+// lookup fails.
+// Admin NAMES, or null when the detail read cannot supply them.
+//
+// This used to fall back to `v.adminVids` — the raw CESR public keys — and print them as if they were names.
+// The projection deliberately does not carry them (nor `adminDids`), so the honest fallback is the count the
+// DTO does provide.
+async function fetchAdminNames(v) {
+  var did = v.did || '';
+  if (!did) return null;
+  try {
+    var detail = await apiGet('/api/community-detail?did=' + encodeURIComponent(did));
+    var admins = (detail.members || [])
+      .filter(function(m) { return m.role === 'founding_admin' && m.status === 'active'; })
+      .map(function(m) { return m.name; })
+      .filter(Boolean);
+    if (admins.length > 0) return admins;
+  } catch (e) { /* fall through to the count */ }
+  return null;
+}
+
+async function loadVtcList() {
+  var el = $('vtc-list');
+  try {
+    var govDocs = await apiGet('/api/vtcs');
+    var communities = govDocs || [];
+    if (communities.length === 0) {
+      el.innerHTML = '<p class="muted">None yet.</p>';
+      return;
+    }
+    var withAdmins = await Promise.all(communities.map(async function(v) {
+      return { v: v, admins: await fetchAdminNames(v) };
+    }));
+    el.innerHTML = withAdmins.map(function(item) {
+      var v = item.v;
+      var name = v.name || '(unnamed)';
+      // `kind`, not `role`: a governance doc has never carried a `role`, so this test was always false and every
+      // VTN rendered as "VTC".
+      var roleLabel = (v.kind === 'vtn' ? 'VTN' : 'VTC');
+      var count = typeof v.adminCount === 'number' ? v.adminCount : 0;
+      var adminLabel = (item.admins && item.admins.length > 0)
+        ? item.admins.join(', ')
+        : (count === 1 ? '1 admin' : count + ' admins');
+      return '<div class="entity-row"><span style="background:#334155;width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;">' + roleLabel + '</span>' +
+        '<div><div class="name">' + esc(name) + '</div>' +
+        '<div class="meta">' + esc(adminLabel) + '</div></div><span class="spacer"></span></div>';
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<p class="muted">Unable to load: ' + esc(e.message) + '</p>';
+  }
+}
+
+// ── Submit ─────────────────────────────────────────────────────────────
+async function submitForm() {
+  var errorEl = $('error');
+  var resultEl = $('create-result');
+  errorEl.style.display = 'none';
+  errorEl.textContent = '';
+  resultEl.className = 'result-msg';
+  resultEl.innerHTML = '';
+
+  var name = $('vtc-name').value.trim();
+  var parentCommunityUuid = $('parent-vtn').value.trim();
+  var checked = document.querySelectorAll('#admin-checklist input:checked');
+  var adminUuids = Array.from(checked).map(function(cb) { return decodeURIComponent(cb.value); }).filter(Boolean);
+  var foundingAdmins = parseInt($('vtc-founding-admins').value, 10) || 1;
+  if (foundingAdmins < 1) foundingAdmins = 1;
+  var btn = $('create-btn');
+
+  if (!name) { showError('Community name is required.'); return; }
+
+  // Check name status one more time before submitting
+  var status = $('name-status');
+  if (status.textContent && (status.textContent.indexOf('taken') >= 0 || status.textContent.indexOf('unavailable') >= 0)) {
+    showError(status.textContent.replace(/^[✓✗]\s*/, ''));
+    return;
+  }
+  if (btn.disabled) {
+    // Button is disabled when preconditions are not met:
+    //  - the name has not been confirmed available by the utility server
+    //  - or insufficient founding admins are selected
+    var st = ($('name-status').textContent || '').trim();
+    if (st.indexOf('Checking') >= 0 || st.length === 0) {
+      showError('Please wait for the name availability check to complete, or re-enter the community name.');
+    } else {
+      showError('All preconditions must be met to create a community — a confirmed-available name and enough founding admins.');
+    }
+    return;
+  }
+
+  if (adminUuids.length < 1) {
+    showError('Select at least one founding admin (yourself).');
+    return;
+  }
+  if (adminUuids.length < foundingAdmins) {
+    showError('You set ' + foundingAdmins + ' founding admin(s). Select ' +
+      (foundingAdmins - adminUuids.length) + ' more (or lower the number) to continue.');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+
+  try {
+    var data = await apiPost('/api/vtcs', {
+      name: name,
+      kind: 'vtc',
+      // NB: the form deliberately sends NO signature threshold. The only
+      // creation-time governance input is the number of founding admins — they ARE
+      // the community's admins (its first admins). The community's internal M-of-N
+      // is a server-side default until the governance rule manager exists.
+      adminUuids: adminUuids,
+      parentCommunityUuid: parentCommunityUuid || undefined,
+    });
+
+    var ceremonyId = data.ceremonyId || '';
+    var shortId = ceremonyId ? ceremonyId.slice(0, 8) : '';
+
+    if (data.awaitingCoSignatures) {
+      // A community is founded only when EVERY named admin has co-signed: naming
+      // someone an admin is a REQUEST to administer, not a grant. This agent's own
+      // approval is recorded; the others must sign from their OWN agents, where the
+      // same ceremony shows up under "Pending Approvals".
+      var got = (data.approvalsReceived != null) ? data.approvalsReceived : '?';
+      var need = (data.approvalsRequired != null) ? data.approvalsRequired : '?';
+      resultEl.className = 'result-msg show';
+      resultEl.style.background = '#1a1a0a';
+      resultEl.style.color = '#fbbf24';
+      resultEl.innerHTML = '<strong>&#x23F3; Awaiting co-signatures (' + got + ' of ' + need + ').</strong> ' +
+        esc(name) + ' is <strong>not established yet</strong> — every named founding admin must sign ' +
+        'the proposal from their own agent first.<br>' +
+        '<span style="font-size:12px;">' +
+        (shortId ? ('Ceremony ID: <code>' + esc(shortId) + '&hellip;</code> &middot; ') : '') +
+        'Each named admin sees it under <strong>Pending Approvals</strong>.</span>';
+
+      $('vtc-name').value = '';
+      $('parent-vtn').value = '';
+      $('name-status').textContent = '';
+      $('name-status').className = 'name-status';
+      showStep(1);
+      loadAdminChecklist();
+      loadVtcList();
+      loadPendingCeremonies();
+      updateCreateButton();
+      return;
+    }
+
+    resultEl.className = 'result-msg show';
+    resultEl.style.background = '#064e3b';
+    resultEl.style.color = '#34d399';
+    resultEl.innerHTML = '<strong>✓ Community ceremony crystallized!</strong> ' +
+      esc(name) + ' was created successfully.<br>' +
+      '<span style="font-size:12px;">' +
+      (shortId ? ('Ceremony ID: <code>' + esc(shortId) + '…</code> &middot; ') : '') +
+      'VTC data will sync to all founding admins shortly.</span>';
+
+    // Clear the form and return to step 1 on success
+    $('vtc-name').value = '';
+    $('parent-vtn').value = '';
+    $('name-status').textContent = '';
+    $('name-status').className = 'name-status';
+    showStep(1);
+    loadAdminChecklist();
+    loadVtcList();
+    // Re-evaluate button state (name was cleared → button disables)
+    updateCreateButton();
+  } catch(e) {
+    resultEl.className = 'result-msg show';
+    resultEl.style.background = '#7f1d1d';
+    resultEl.style.color = '#fca5a5';
+    resultEl.innerHTML = 'Error: ' + esc(e.message);
+    // Also show the name as unavailable since the create failed
+    if (e.message && e.message.indexOf('UNIQUE') >= 0) {
+      $('name-status').textContent = '✗ This name is already taken.';
+      $('name-status').className = 'name-status taken';
+    }
+    updateCreateButton();
+  }
+}
+
+// ── Parent VTN selector ────────────────────────────────────────────────
+// The list comes from this agent's own route, which merges (a) VTNs it holds a local
+// record for and (b) the namespace VTN its utility server serves. The VTN is a
+// SERVER-side identity and an agent only receives records for communities it is a
+// MEMBER of, so without (b) the picker showed only "None — standalone VTC" even though
+// the server accepts the parent and wires the affiliation.
+//
+// A namespace VTN is labelled by its NAMESPACE (`p2pts`) — the value the operator
+// configured and the one agents address in `vta:<namespace>:<name>` — with the VTN's own
+// name appended only when it differs.
+async function loadParentVtns() {
+  var el = $('parent-vtn');
+  if (!el) return;
+  var vtns = [];
+  try {
+    vtns = await apiGet('/api/parent-vtns');
+  } catch (e) {
+    try {
+      var communities = await apiGet('/api/communities');
+      vtns = (communities || []).filter(function(c) { return c.role === 'vtn'; });
+    } catch (e2) { vtns = []; }
+  }
+  el.innerHTML = '<option value="">None — standalone VTC</option>' +
+    (vtns || []).map(function(v) {
+      var id = v.uuid || v.did || '';
+      if (!id) return '';
+      var label = v.namespace
+        ? v.namespace + (v.name && v.name !== v.namespace ? ' — ' + v.name : '')
+        : (v.name || '(unnamed VTN)');
+      return '<option value="' + esc(id) + '">' + esc(label) + '</option>';
+    }).join('');
+}
+
+// Name edits clear any stale availability verdict WITHOUT firing a network
+// check. The check only happens on the Next-button press (nextStep → step 3),
+// with a 3-second cooldown between attempts.
+$('vtc-name').addEventListener('input', function () {
+  var status = $('name-status');
+  if (status.textContent && (status.textContent.indexOf('available') >= 0 || status.textContent.indexOf('taken') >= 0 || status.textContent.indexOf('unavailable') >= 0 || status.textContent.indexOf('Checking') >= 0)) {
+    status.textContent = '';
+    status.className = 'name-status';
+    updateCreateButton();
+  }
+});
+// The number of founding admins directly gates the Create button: changing it
+// re-evaluates whether enough admins are selected.
+$('vtc-founding-admins').addEventListener('input', updateCreateButton);
+
+
+// ── Pending approvals (co-founder co-signing) ──────────────────────────
+// A ceremony stays pending until EVERY named founding admin has co-signed: the
+// creator's own approval no longer founds the community on everyone's behalf.
+// This list is the surface where each named admin signs (each approval is a real
+// Ed25519 signature the server verifies before crystallizing).
+async function loadPendingCeremonies() {
+  var el = $('pending-ceremonies');
+  if (!el) return;
+  try {
+    var data = await apiGet('/api/ceremonies/pending');
+    var list = (data && data.ceremonies) || [];
+    if (list.length === 0) {
+      el.innerHTML = '<p class="muted" style="font-size:12px;">No ceremonies need your signature.</p>';
+      return;
+    }
+    el.innerHTML = list.map(function (c) {
+      var id = esc(c.ceremonyId || '');
+      return '<div style="padding:6px 0; border-bottom:1px solid #1e2535;">' +
+        '<div><strong>' + esc(c.name || '(unnamed)') + '</strong> ' +
+        '<span class="muted" style="font-size:11px;">(' + (c.approvalCount || 0) + ' of ' +
+        (c.adminCount || 1) + ' admins have co-signed)</span></div>' +
+        '<div style="margin-top:4px;">' +
+        '<button class="btn btn-primary" style="font-size:11px; padding:4px 8px;" ' +
+        'onclick="approveCeremonyClicked(\'' + id + '\')">Sign &amp; approve</button>' +
+        '</div></div>';
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<p class="muted" style="font-size:12px;">Could not load pending approvals.</p>';
+  }
+}
+
+async function approveCeremonyClicked(ceremonyId) {
+  if (!ceremonyId) return;
+  try {
+    await apiPost('/api/ceremonies/' + encodeURIComponent(ceremonyId) + '/approve', {});
+    await loadPendingCeremonies();
+    await loadVtcList();
+  } catch (e) {
+    alert('Approval failed: ' + (e.message || e));
+  }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────
+async function init() {
+  var active = await requireActiveAgent();
+  if (!active) return;
+  await loadIdentity();
+  loadParentVtns();
+  loadVtcList();
+  loadPendingCeremonies();
+  showStep(1);
+  updateCreateButton();
+}
+
+init();
+</script>
+</body>
+</html>

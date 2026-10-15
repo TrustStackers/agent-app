@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en" data-page="invitations">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invitations — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .invite-card { background: #0a0e17; border: 1px solid #1e2535; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .invite-card h3 { margin: 0 0 8px 0; }
+  .invite-card .meta { font-size: 13px; color: #94a3b8; }
+  .empty-state { text-align: center; padding: 40px; color: #64748b; }
+  .accept-btn { background: #16a34a; color: #fff; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; margin-right: 6px; }
+  .decline-btn { background: #1e2535; color: #94a3b8; border: 1px solid #1e2535; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+</style>
+</head>
+<body data-page="invitations">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div id="status-area"></div>
+  <h2>Invitations</h2>
+  <p class="muted">Communities that have invited you to join.</p>
+  <div id="invite-list">Loading...</div>
+</div>
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+async function apiGet(path) {
+  var r = await fetch(path);
+  if (!r.ok) throw new Error(r.status + ': ' + (await r.text()).slice(0, 100));
+  return r.json();
+}
+async function apiPost(path, body) {
+  var r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  var d = await r.json();
+  if (!r.ok) throw new Error(d.error?.message || 'HTTP ' + r.status);
+  return d;
+}
+function escapeHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+function showStatus(msg, type) {
+  var area = document.getElementById('status-area');
+  var colors = { success: '#064e3b', error: '#7f1d1d', info: '#1e3a5f' };
+  area.innerHTML = '<div style="padding:10px 14px; border-radius:6px; margin-bottom:8px; background:' + (colors[type] || '#1e3a5f') + '; color:#e0e6ed;">' + escapeHtml(msg) + '</div>';
+  setTimeout(function() { area.innerHTML = ''; }, 6000);
+}
+
+async function loadInvitations() {
+  var el = document.getElementById('invite-list');
+  try {
+    var invites = await apiGet('/api/invitations');
+    if (!invites || invites.length === 0) {
+      el.innerHTML = '<div class="empty-state"><p>No pending invitations.</p><p class="muted">When someone invites you to a community, it will appear here.</p></div>';
+      return;
+    }
+    el.innerHTML = invites.map(function(i) {
+      return '<div class="invite-card">' +
+        '<h3>You\u2019ve been invited to join ' + escapeHtml(i.communityName) + '</h3>' +
+        '<div class="meta">Community DID: <code>' + escapeHtml((i.communityDid || '').slice(0, 32)) + '…</code></div>' +
+        '<div style="margin-top:10px;">' +
+          '<button class="accept-btn" onclick="acceptInvite(this, \'' + escapeHtml(i.uuid) + '\')">Accept</button>' +
+          '<button class="decline-btn" onclick="declineInvite(this, \'' + escapeHtml(i.uuid) + '\')">Decline</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<div class="empty-state"><p style="color:#f87171;">Failed to load: ' + escapeHtml(e.message) + '</p></div>';
+  }
+}
+
+async function acceptInvite(btn, uuid) {
+  btn.disabled = true; btn.textContent = 'Accepting…';
+  try {
+    var r = await apiPost('/api/invitations/' + encodeURIComponent(uuid) + '/accept');
+    showStatus(r.message || 'Join request submitted.', 'success');
+    await loadInvitations();
+  } catch (e) {
+    showStatus('Failed to accept: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = 'Accept';
+  }
+}
+
+async function declineInvite(btn, uuid) {
+  btn.disabled = true; btn.textContent = 'Declining…';
+  try {
+    await apiPost('/api/invitations/' + encodeURIComponent(uuid) + '/decline');
+    showStatus('Invitation declined.', 'info');
+    await loadInvitations();
+  } catch (e) {
+    showStatus('Failed to decline: ' + e.message, 'error');
+    btn.disabled = false; btn.textContent = 'Decline';
+  }
+}
+
+async function init() {
+  var active = await requireActiveAgent();
+  if (!active) return;
+  await loadInvitations();
+}
+init();
+</script>
+</body>
+</html>

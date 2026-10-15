@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en" data-page="vta-profile">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Profile — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .copy-btn { cursor: pointer; font-size: 11px; padding: 2px 8px; background: #1e3a5f; color: #93c5fd; border: 1px solid #2563eb; border-radius: 4px; }
+  .copy-btn:hover { background: #2563eb; color: white; }
+  .kv { width: 100%; border-collapse: collapse; }
+  .kv th { text-align: left; color: #94a3b8; font-weight: 500; font-size: 12px; padding: 6px 8px 6px 0; white-space: nowrap; vertical-align: top; }
+  .kv td { padding: 6px 0; font-size: 13px; word-break: break-all; }
+  .kv code { font-family: 'SF Mono', Monaco, monospace; font-size: 12px; color: #e0e6ed; }
+  .badge-role { font-size: 11px; padding: 1px 6px; border-radius: 3px; }
+  .badge-admin { background: #3b2f1e; color: #fbbf24; }
+  .badge-member { background: #1e2e3b; color: #7dd3fc; }
+  .badge-vtn { background: #1e3a5f; color: #93c5fd; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .badge-vtc { background: #1e3a5f; color: #60a5fa; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .community-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid #1e2535; }
+  .community-row .name { font-weight: 600; font-size: 13px; }
+  .community-row .spacer { flex: 1; }
+  .empty-state { color: #64748b; font-size: 13px; padding: 8px 0; }
+  .copied { color: #34d399; font-size: 11px; margin-left: 6px; }
+</style>
+</head>
+<body data-page="vta-profile">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div id="status-area"></div>
+
+  <div class="card">
+    <h2>Agent Profile</h2>
+    <p id="profile-heading" class="muted">Loading…</p>
+    <table class="kv" id="identity-table" style="display:none;">
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Network Addresses</h2>
+    <div id="multiaddrs"><p class="muted">Loading…</p></div>
+  </div>
+
+  <div class="card">
+    <h2>Communities</h2>
+    <div id="community-list"><p class="muted">Loading…</p></div>
+  </div>
+
+  <div class="card">
+    <h2>Next Steps</h2>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <a href="profiles.html" class="copy-btn">👤 Manage Profiles</a>
+      <a href="credentials.html" class="copy-btn">📜 Credentials</a>
+      <a href="communities.html" class="copy-btn">🏛️ Communities</a>
+      <a href="chat.html" class="copy-btn">💬 Chat</a>
+    </div>
+  </div>
+</div>
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+async function requireActiveAgentLocal() {
+  try {
+    var resp = await fetch('/api/identity');
+    if (!resp.ok) { window.location.href = 'index.html'; return false; }
+    var data = await resp.json();
+    if (!data.active) { window.location.href = 'index.html'; return false; }
+    return true;
+  } catch (_) { window.location.href = 'index.html'; return false; }
+}
+
+function apiGet(path) { return fetch(path).then(function(r){ if(!r.ok) throw new Error(r.statusText); return r.json(); }); }
+function el(id) { return document.getElementById(id); }
+
+function escapeHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s == null ? '' : s;
+  return d.innerHTML;
+}
+
+// Copy an arbitrary string to the clipboard and flash a confirmation next to
+// the button that was pressed.
+async function copyValue(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    var note = document.createElement('span');
+    note.className = 'copied';
+    note.textContent = '✓ copied';
+    if (btn && btn.parentNode) {
+      btn.parentNode.appendChild(note);
+      setTimeout(function () { if (note.parentNode) note.parentNode.removeChild(note); }, 1500);
+    }
+  } catch (_) { /* clipboard unavailable (insecure context) — ignore */ }
+}
+
+function kindLabel(kind) {
+  if (kind === 'ai_agent') return '🤖 AI Agent';
+  if (kind === 'human') return '👤 Human';
+  if (kind === 'organization') return '🏢 Organization';
+  if (kind === 'object') return '📦 Object';
+  return '👤 Human';
+}
+
+// One key/value row. `did`-length values wrap; a copy button is optional.
+function kvRow(label, value, opts) {
+  opts = opts || {};
+  var shown = opts.mono === false ? escapeHtml(value) : '<code>' + escapeHtml(value) + '</code>';
+  var copy = opts.copy && value
+    ? ' <button class="copy-btn" type="button" data-copy="' + escapeHtml(value) + '">Copy</button>'
+    : '';
+  return '<tr><th>' + escapeHtml(label) + '</th><td>' + shown + copy + '</td></tr>';
+}
+
+function fmtDate(ms) {
+  if (!ms) return '—';
+  try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
+}
+
+async function loadProfile() {
+  var heading = el('profile-heading');
+  var table = el('identity-table');
+
+  var data;
+  try {
+    data = await apiGet('/api/identity');
+  } catch (e) {
+    heading.textContent = 'Error loading identity: ' + e.message;
+    return;
+  }
+  if (!data || !data.active) { window.location.href = 'index.html'; return; }
+
+  var meta = data.meta || {};
+  var ident = data.identity || {};
+  var kind = ident.subjectKind || null;
+
+  heading.innerHTML = '<strong>' + escapeHtml(data.name || '(unnamed)') + '</strong> ' +
+    '<span class="muted">' + kindLabel(kind) + '</span>';
+
+  var rows = [];
+  rows.push(kvRow('Full DID', data.did, { copy: true }));
+  rows.push(kvRow('VID (CESR)', data.vid, { copy: true }));
+  rows.push(kvRow('Peer ID', data.peerId, { copy: true }));
+  if (ident.uuid) rows.push(kvRow('Identity UUID', ident.uuid, { copy: true }));
+  rows.push(kvRow('Subject Kind', kind || '—', { mono: false }));
+  rows.push(kvRow('Custody', ident.custody || '—', { mono: false }));
+  rows.push(kvRow('Role', ident.role || 'vta', { mono: false }));
+  rows.push(kvRow('DID Method', meta.method || '—', { mono: false }));
+  rows.push(kvRow('Created At', fmtDate(ident.createdAt || meta.createdAt), { mono: false }));
+  if (meta.dataDir) rows.push(kvRow('Data Dir', meta.dataDir, { copy: true }));
+  if (meta.bootstrapUrl) rows.push(kvRow('Bootstrap URL', meta.bootstrapUrl, { mono: false }));
+
+  table.querySelector('tbody').innerHTML = rows.join('');
+  table.style.display = '';
+
+  // Wire copy buttons (values are carried on data-copy, so no inline JS).
+  table.querySelectorAll('button.copy-btn[data-copy]').forEach(function (btn) {
+    btn.addEventListener('click', function () { copyValue(btn.getAttribute('data-copy'), btn); });
+  });
+
+  var addrs = data.multiaddrs || [];
+  el('multiaddrs').innerHTML = addrs.length
+    ? '<div style="display:flex; flex-direction:column; gap:6px;">' +
+        addrs.map(function (a) {
+          return '<div style="display:flex; align-items:center; gap:8px;">' +
+            '<code style="font-size:12px; word-break:break-all;">' + escapeHtml(a) + '</code>' +
+            '<button class="copy-btn" type="button" data-copy="' + escapeHtml(a) + '">Copy</button></div>';
+        }).join('') + '</div>'
+    : '<p class="empty-state">No network addresses — is the agent running?</p>';
+  el('multiaddrs').querySelectorAll('button.copy-btn[data-copy]').forEach(function (btn) {
+    btn.addEventListener('click', function () { copyValue(btn.getAttribute('data-copy'), btn); });
+  });
+}
+
+function roleBadge(role) {
+  // An admin is an admin: `founding_admin` is PROVENANCE (present at creation),
+  // not a rank — both carry identical powers.
+  if (role === 'founding_admin') return '<span class="badge-role badge-admin">admin</span> <span class="muted" style="font-size:10px;">founding</span>';
+  if (role === 'admin') return '<span class="badge-role badge-admin">admin</span>';
+  if (role === 'moderator') return '<span class="badge-role badge-member">moderator</span>';
+  if (role === 'issuer') return '<span class="badge-role badge-member">issuer</span>';
+  return '<span class="badge-role badge-member">' + escapeHtml(role || 'member') + '</span>';
+}
+
+async function loadCommunities() {
+  var wrap = el('community-list');
+  try {
+    var list = await apiGet('/api/communities');
+    if (!list || list.length === 0) {
+      wrap.innerHTML = '<p class="empty-state">This VTA is not a member of any community yet.</p>';
+      return;
+    }
+    wrap.innerHTML = list.map(function (c) {
+      var isVtn = c.role === 'vtn';
+      var myRole = c.myRole || 'member';
+      return '<div class="community-row">' +
+        '<span class="name">' + escapeHtml(c.name || '(unnamed)') + '</span>' +
+        '<span class="' + (isVtn ? 'badge-vtn' : 'badge-vtc') + '">' + escapeHtml(String(c.role || '').toUpperCase()) + '</span>' +
+        roleBadge(myRole) +
+        '<span class="spacer"></span>' +
+        '</div>';
+    }).join('');
+  } catch (e) {
+    wrap.innerHTML = '<p class="empty-state">Could not load communities: ' + escapeHtml(e.message) + '</p>';
+  }
+}
+
+(async function () {
+  if (!(await requireActiveAgentLocal())) return;
+  loadProfile();
+  loadCommunities();
+})();
+</script>
+</body>
+</html>
+

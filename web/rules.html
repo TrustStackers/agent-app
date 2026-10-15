@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en" data-page="rules">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rules — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .rule-card { background: #0a0e17; border: 1px solid #1e2535; border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+  .rule-card h3 { margin: 0 0 10px 0; font-size: 14px; color: #60a5fa; }
+  .rule-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+  .rule-row label { min-width: 220px; color: #94a3b8; font-size: 13px; }
+  .rule-row input, .rule-row select { background: #0a0e17; border: 1px solid #1e2535; border-radius: 4px; color: #e0e6ed; padding: 6px 8px; }
+  .rule-row .hint { font-size: 11px; color: #64748b; }
+  .kv { font-size: 13px; color: #cbd5e1; }
+  .kv b { color: #e0e6ed; }
+  .proposal { border: 1px solid #1e2535; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; background: #0a0e17; }
+  .proposal .meta { font-size: 12px; color: #94a3b8; margin-bottom: 8px; word-break: break-word; }
+  .proposal .change { font-size: 12px; color: #cbd5e1; font-family: 'SF Mono', Monaco, monospace; white-space: pre-wrap; }
+  .btn-primary { cursor: pointer; background: #2563eb; color: #fff; border: none; border-radius: 4px; padding: 8px 14px; font-size: 13px; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-outline { cursor: pointer; background: transparent; color: #93c5fd; border: 1px solid #2563eb; border-radius: 4px; padding: 6px 12px; font-size: 12px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-left: 6px; }
+  .badge-admin { background: #3b2f1e; color: #fbbf24; }
+  .badge-member { background: #1e3a5f; color: #93c5fd; }
+  .empty-state { color: #64748b; font-size: 13px; padding: 8px 0; }
+  .msg { font-size: 13px; margin-top: 8px; }
+  .msg.ok { color: #34d399; }
+  .msg.err { color: #f87171; }
+  .muted { color: #64748b; font-size: 12px; }
+</style>
+</head>
+<body data-page="rules">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div id="status-area"></div>
+  <h2>Governance Rules</h2>
+  <p class="muted">Configure a community's governance. A change is applied only once the people it affects
+    consent — by default <b>every admin</b>; a setting can be scoped to require members instead.</p>
+
+  <div class="rule-card">
+    <h3>Community</h3>
+    <div class="rule-row">
+      <label for="community">Community you administer</label>
+      <select id="community" style="min-width:320px;"></select>
+    </div>
+    <div id="admin-hint" class="muted"></div>
+  </div>
+
+  <div class="rule-card">
+    <h3>Current rules</h3>
+    <div id="current-rules" class="kv"><span class="muted">Loading…</span></div>
+  </div>
+
+  <div class="rule-card">
+    <h3>Propose a change</h3>
+    <div class="rule-row">
+      <label for="th-m">Approver threshold (M) — admins needed to endorse</label>
+      <input id="th-m" type="number" min="1" style="width:90px;">
+    </div>
+    <div class="rule-row">
+      <label for="th-n">Admin count (N) — how many admins the community should have</label>
+      <input id="th-n" type="number" min="1" style="width:90px;">
+    </div>
+    <div class="rule-row">
+      <label for="scope">Who must approve this change</label>
+      <select id="scope">
+        <option value="admins">All admins (default)</option>
+        <option value="members">A number of members</option>
+        <option value="all_members">All members</option>
+      </select>
+      <input id="min-approvals" type="number" min="1" value="2" style="width:80px; display:none;">
+      <span class="hint" id="scope-hint">Every admin/founding admin must co-sign.</span>
+    </div>
+    <button id="propose-btn" class="btn-primary">Propose change</button>
+    <div id="propose-msg" class="msg"></div>
+  </div>
+
+  <div class="rule-card">
+    <h3>Pending proposals</h3>
+    <p class="muted">Changes awaiting co-signatures from you (and the other eligible approvers).</p>
+    <div id="proposals"><span class="muted">Loading…</span></div>
+  </div>
+</div>
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+function apiGet(path) { return fetch(path).then(function(r){ if(!r.ok) throw new Error(r.statusText); return r.json(); }); }
+function apiPost(path, body) {
+  return fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) })
+    .then(function(r){ return r.json().then(function(d){ if(!r.ok){ throw new Error((d && d.error && d.error.message) || ('HTTP '+r.status)); } return d; }); });
+}
+function el(id) { return document.getElementById(id); }
+function escapeHtml(s){ var d=document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+
+// ── Live refresh ────────────────────────────────────────────────────────────
+// A governance change is a CROSS-AGENT event: the other admin co-signs on a different machine
+// at any moment, and the change then crystallizes server-side. ALL THREE parts now push, so this
+// page reacts the moment they happen rather than on a timer:
+//
+//   - a proposal BEGINS       -> `governance-proposal` (the server's durable fan-out)
+//   - a co-signer APPROVES    -> `governance-proposal` again (the server re-fans the immutable
+//                                proposal, versioned by approval count, so the "N of M verified"
+//                                counter updates without asking)
+//   - a change CRYSTALLIZES   -> `community-changed` with kind 'governance'
+//
+// `loadProposals` already repaints only when the server's answer actually changed, so an event
+// that turns out to be a no-op costs one request and no flicker.
+var pollBusy = false;
+var lastProposalsSnapshot = null;
+var proposalMsgs = {};
+
+// A writable stand-in for a proposal card's message span. It KEEPS the message, so a poll that
+// re-renders the list cannot erase "Signed — 1 of 2 verified", and it writes through to the
+// span whenever that span is on screen.
+function msgProxy(id) {
+  var store = proposalMsgs[id] = proposalMsgs[id] || { cls: 'msg', text: '' };
+  function apply() {
+    var m = document.getElementById('msg-' + id);
+    if (m) { m.className = store.cls; m.textContent = store.text; }
+  }
+  return {
+    get className() { return store.cls; },
+    set className(v) { store.cls = v; apply(); },
+    get textContent() { return store.text; },
+    set textContent(v) { store.text = v; apply(); }
+  };
+}
+
+var communities = [];
+
+async function loadCommunities() {
+  var sel = el('community');
+  try {
+    var list = await apiGet('/api/communities');
+    // Only communities where this VTA is an admin may have their rules managed here.
+    communities = (list || []).filter(function(c){ return c.myRole === 'admin' || c.myRole === 'founding_admin'; });
+    if (communities.length === 0) {
+      sel.innerHTML = '<option value="">No communities you administer</option>';
+      el('admin-hint').textContent = 'Only admins and founding admins can manage a community\u2019s rules.';
+      el('current-rules').innerHTML = '<span class="muted">Nothing to show.</span>';
+      return;
+    }
+    sel.innerHTML = communities.map(function(c){
+      return '<option value="' + escapeHtml(c.uuid) + '">' + escapeHtml(c.name) +
+        ' (' + escapeHtml(String(c.role).toUpperCase()) + ')</option>';
+    }).join('');
+    sel.onchange = onCommunityChange;
+    onCommunityChange();
+  } catch (e) {
+    sel.innerHTML = '<option value="">Could not load communities</option>';
+  }
+}
+
+function onCommunityChange() {
+  var uuid = el('community').value;
+  if (!uuid) return;
+  var c = communities.filter(function(x){ return x.uuid === uuid; })[0] || {};
+  el('th-m').value = c.adminThresholdM != null ? c.adminThresholdM : '';
+  el('th-n').value = c.adminThresholdN != null ? c.adminThresholdN : '';
+  el('admin-hint').innerHTML = 'You are <span class="badge badge-admin">' + escapeHtml(c.myRole) + '</span> of this community.';
+  loadCurrent(c.did);
+}
+
+async function loadCurrent(did) {
+  var box = el('current-rules');
+  try {
+    var d = await apiGet('/api/community-detail?did=' + encodeURIComponent(did));
+    var g = d.governance || {};
+    var types = (g.allowedClaimTypes && g.allowedClaimTypes.length) ? g.allowedClaimTypes.join(', ') : '\u2014 (none declared)';
+    box.innerHTML =
+      '<div><b>Approver threshold (M):</b> ' + (g.adminThresholdM != null ? g.adminThresholdM : '\u2014') + ' admins</div>' +
+      '<div><b>Admin count (N):</b> ' + (g.adminThresholdN != null ? g.adminThresholdN : '\u2014') + ' admins</div>' +
+      '<div><b>Allowed credential types:</b> ' + escapeHtml(types) + '</div>';
+  } catch (e) {
+    box.innerHTML = '<span class="muted">Could not load current rules: ' + escapeHtml(e.message) + '</span>';
+  }
+}
+
+function scopeChanged() {
+  var scope = el('scope').value;
+  el('min-approvals').style.display = scope === 'members' ? '' : 'none';
+  el('scope-hint').textContent = scope === 'admins' ? 'Every admin/founding admin must co-sign.'
+    : scope === 'all_members' ? 'Every active member must co-sign.'
+    : 'This many members must co-sign.';
+}
+
+async function propose() {
+  var uuid = el('community').value;
+  var msg = el('propose-msg');
+  if (!uuid) { msg.className='msg err'; msg.textContent='Pick a community first.'; return; }
+  var change = {};
+  var m = parseInt(el('th-m').value, 10);
+  var n = parseInt(el('th-n').value, 10);
+  if (!isNaN(m)) change.adminThresholdM = m;
+  if (!isNaN(n)) change.adminThresholdN = n;
+  if (Object.keys(change).length === 0) { msg.className='msg err'; msg.textContent='Set at least one value to change.'; return; }
+  var scope = el('scope').value;
+  var minApprovals = scope === 'members' ? parseInt(el('min-approvals').value, 10) : undefined;
+  var btn = el('propose-btn'); btn.disabled = true; msg.className='msg'; msg.textContent='Proposing\u2026';
+  try {
+    var res = await apiPost('/api/governance/propose', { communityUuid: uuid, change: change, scope: scope, minApprovals: minApprovals });
+    if (res.success) {
+      msg.className='msg ok';
+      msg.textContent = '\u2713 Proposal created' + (res.status ? ' (' + res.status + ')' : '') +
+        (res.status === 'crystallized' ? ' \u2014 applied.' : ' \u2014 awaiting co-signatures.');
+      loadProposals();
+    } else { msg.className='msg err'; msg.textContent = '\u2717 ' + (res.error || 'proposal failed'); }
+  } catch (e) { msg.className='msg err'; msg.textContent = '\u2717 ' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+async function loadProposals() {
+  var wrap = el('proposals');
+  try {
+    var list = await apiGet('/api/governance/proposals');
+    list = list || [];
+    // Repaint ONLY when the server's answer actually changed, so a background poll never
+    // flickers the list or fights the operator's click.
+    var snap = JSON.stringify(list);
+    if (snap === lastProposalsSnapshot) return;
+    lastProposalsSnapshot = snap;
+    if (list.length === 0) { wrap.innerHTML = '<div class="empty-state">No pending proposals.</div>'; return; }
+    wrap.innerHTML = list.map(function(p){
+      var c = communities.filter(function(x){ return x.uuid === p.communityUuid; })[0];
+      var name = c ? c.name : p.communityUuid;
+      // REAL progress: signatures that VERIFY, out of the number required. A recorded
+      // signature the server cannot verify never counts toward the quorum, so showing
+      // "verified" rather than "signed" is the difference between waiting for a co-signer
+      // and waiting forever.
+      var verified = (p.verifiedApproverCount === undefined) ? null : p.verifiedApproverCount;
+      var saved = proposalMsgs[p.proposalId] || { cls: 'msg', text: '' };
+      var progress = (verified === null)
+        ? ('needs ' + p.requiredApproverCount + ' approval(s)')
+        : (verified + ' of ' + p.requiredApproverCount + ' verified');
+      return '<div class="proposal">' +
+        '<div class="meta"><b>' + escapeHtml(name) + '</b> \u2014 scope <span class="badge badge-member">' +
+          escapeHtml(p.scope) + '</span>, ' + escapeHtml(String(progress)) + '</div>' +
+        '<div class="change">' + escapeHtml(JSON.stringify(p.change, null, 2)) + '</div>' +
+        '<div style="margin-top:8px;"><button class="btn-outline" data-approve="' + escapeHtml(p.proposalId) +
+          '" data-verified="' + (verified === null ? '' : verified) +
+          '">Approve / Co-sign</button> <span class="' + saved.cls + '" id="msg-' + escapeHtml(p.proposalId) + '">' + escapeHtml(saved.text) + '</span></div>' +
+        '</div>';
+    }).join('');
+    wrap.querySelectorAll('button[data-approve]').forEach(function(b){
+      b.addEventListener('click', function(){ approveProposal(b.getAttribute('data-approve'), b); });
+    });
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty-state">Could not load proposals: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+async function approveProposal(id, btn) {
+  var msg = msgProxy(id);
+  var raw = btn.getAttribute('data-verified');
+  var before = (raw === null || raw === '') ? null : parseInt(raw, 10);
+  btn.disabled = true; if (msg) { msg.className='msg'; msg.textContent='Signing\u2026'; }
+  try {
+    var res = await apiPost('/api/governance/proposals/' + encodeURIComponent(id) + '/approve', {});
+    if (!res.success) {
+      if (msg) { msg.className='msg err'; msg.textContent = '\u2717 ' + (res.error || 'failed'); }
+      return;
+    }
+    if (res.status === 'crystallized') {
+      if (msg) { msg.className='msg ok'; msg.textContent = '\u2713 Applied.'; }
+    } else if (before !== null && typeof res.verifiedApproverCount === 'number'
+               && res.verifiedApproverCount > before) {
+      if (msg) {
+        msg.className='msg ok';
+        msg.textContent = '\u2713 Signed \u2014 ' + res.verifiedApproverCount + ' of ' +
+          res.requiredApproverCount + ' verified, awaiting the rest.';
+      }
+    } else {
+      // The signature was RECORDED but did not raise the verified count, so it is not
+      // counting toward the quorum. Never dress that up as success.
+      if (msg) {
+        msg.className='msg err';
+        msg.textContent = '\u26A0 Signature recorded but NOT counted (' +
+          (res.verifiedApproverCount === undefined ? '?' : res.verifiedApproverCount) + ' of ' +
+          (res.requiredApproverCount === undefined ? '?' : res.requiredApproverCount) +
+          ' verified) \u2014 the utility server could not verify it.';
+      }
+    }
+    if (res.status === 'crystallized') {
+      // The proposal leaves the pending list, so park the confirmation in the page-level status
+      // line: otherwise the card (and its message) simply vanishes.
+      var st = el('propose-msg');
+      if (st) { st.className = 'msg ok'; st.textContent = 'The change was applied - the new rules are now in force.'; }
+    }
+    // Force a repaint so an approved-out proposal disappears (or an applied change shows) at
+    // once, rather than waiting for the next event.
+    lastProposalsSnapshot = null;
+    await loadProposals();
+  } catch (e) { if (msg) { msg.className='msg err'; msg.textContent = '\u2717 ' + e.message; } }
+  finally { btn.disabled = false; }
+}
+
+el('scope').addEventListener('change', scopeChanged);
+el('propose-btn').addEventListener('click', propose);
+scopeChanged();
+loadCommunities();
+
+// One refresh pass: the pending list, plus the community's CURRENT rules so an applied change
+// is visible immediately (M/N in the "Current rules" box).
+async function refreshGovernance() {
+  if (pollBusy) return;
+  pollBusy = true;
+  try {
+    await loadProposals();
+    var uuid = el('community').value;
+    var c = communities.filter(function(x){ return x.uuid === uuid; })[0];
+    if (c && c.did) await loadCurrent(c.did);
+  } catch (e) {
+    // Transient (server restarting, VTA busy): leave the last good view up; the next event retries.
+  } finally { pollBusy = false; }
+}
+
+refreshGovernance();
+
+// Event-driven: an arrival, a co-signer's approval and a crystallization ALL push now, so the page
+// no longer asks on a timer. `refreshGovernance` repaints only when the server's answer actually
+// changed, so an event that turns out to be a no-op costs one request and no flicker.
+if (window.AgentStack) {
+  AgentStack.on('governance-proposal', refreshGovernance);
+  AgentStack.on('community-changed', refreshGovernance);
+}
+
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) refreshGovernance(); });
+</script>
+</body>
+</html>

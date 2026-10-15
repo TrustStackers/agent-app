@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Trust Agent — Recovery</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .recovery-section { margin-bottom: 2rem; }
+  .recovery-section h3 { margin-bottom: 0.5rem; }
+  .status-msg { padding: 0.75rem; border-radius: 8px; margin: 1rem 0; }
+  .status-msg.ok { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+  .status-msg.err { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+  .data-table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
+  .data-table th, .data-table td { padding: 0.4rem 0.6rem; text-align: left; border-bottom: 1px solid #ddd; font-size: 0.85rem; }
+  .data-table th { background: #f5f5f5; }
+  pre { background: #f5f5f5; padding: 0.75rem; border-radius: 6px; overflow-x: auto; font-size: 0.8rem; max-height: 300px; overflow-y: auto; }
+  .btn { padding: 0.5rem 1.2rem; border-radius: 6px; border: none; cursor: pointer; font-size: 0.9rem; }
+  .btn-primary { background: #4a90d9; color: white; }
+  .btn-primary:hover { background: #357abd; }
+  .btn-secondary { background: #6c757d; color: white; }
+  input { padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; width: 100%; max-width: 500px; margin: 0.3rem 0; }
+</style>
+</head>
+<body data-page="recovery">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container" id="app">
+  <!-- ── Section 1: Fetch Recovery State ────────────────────────────── -->
+  <div class="card recovery-section">
+    <h2>🔄 Identity Recovery</h2>
+    <p class="muted">
+      Fetch your full public identity state (DID, credentials, memberships,
+      relationships, rotation log) from the utility server's history repository.
+      <strong>Private keys are NEVER included</strong> — you must generate new
+      keys on your new device.
+    </p>
+    <div id="fetch-status"></div>
+    <button class="btn btn-primary" onclick="fetchRecoveryState()">
+      Fetch Recovery State
+    </button>
+    <button class="btn btn-secondary" onclick="lookupOtherDid()" style="margin-left: 0.5rem;">
+      Look Up Other Identity
+    </button>
+  </div>
+
+  <!-- ── Section 2: Lookup Result ───────────────────────────────────── -->
+  <div class="card recovery-section" id="lookup-section" style="display:none;">
+    <h3>Lookup Result</h3>
+    <div id="lookup-result"></div>
+  </div>
+
+  <!-- ── Section 3: Identity ─────────────────────────────────────────── -->
+  <div class="card recovery-section" id="identity-section" style="display:none;">
+    <h3>Identity</h3>
+    <div id="identity-data"></div>
+  </div>
+
+  <!-- ── Section 4: DID Documents ────────────────────────────────────── -->
+  <div class="card recovery-section" id="dids-section" style="display:none;">
+    <h3>DID Documents</h3>
+    <div id="dids-data"></div>
+  </div>
+
+  <!-- ── Section 5: Public Keys ──────────────────────────────────────── -->
+  <div class="card recovery-section" id="keys-section" style="display:none;">
+    <h3>Public Keys</h3>
+    <div id="keys-data"></div>
+  </div>
+
+  <!-- ── Section 6: Credentials ──────────────────────────────────────── -->
+  <div class="card recovery-section" id="creds-section" style="display:none;">
+    <h3>Credentials</h3>
+    <div id="creds-data"></div>
+  </div>
+
+  <!-- ── Section 7: Memberships ──────────────────────────────────────── -->
+  <div class="card recovery-section" id="mems-section" style="display:none;">
+    <h3>Memberships</h3>
+    <div id="mems-data"></div>
+  </div>
+
+  <!-- ── Section 8: Relationships ────────────────────────────────────── -->
+  <div class="card recovery-section" id="rels-section" style="display:none;">
+    <h3>Relationships</h3>
+    <div id="rels-data"></div>
+  </div>
+
+  <!-- ── Section 9: Rotation Log ─────────────────────────────────────── -->
+  <div class="card recovery-section" id="rot-section" style="display:none;">
+    <h3>Rotation Log</h3>
+    <div id="rot-data"></div>
+  </div>
+</div>
+
+<script>
+function showStatus(elId, msg, ok) {
+  const el = document.getElementById(elId);
+  el.innerHTML = `<div class="status-msg ${ok ? 'ok' : 'err'}">${msg}</div>`;
+}
+
+function renderTable(rows, cols) {
+  if (rows.length === 0) return '<p class="muted">None</p>';
+  let html = '<table class="data-table"><tr>';
+  for (const col of cols) html += `<th>${col}</th>`;
+  html += '</tr>';
+  for (const row of rows) {
+    html += '<tr>';
+    for (const col of cols) {
+      const val = row[col] ?? '';
+      const disp = typeof val === 'object' ? JSON.stringify(val).slice(0, 80) : String(val);
+      html += `<td>${disp.slice(0, 100)}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+async function fetchRecoveryState() {
+  showStatus('fetch-status', 'Fetching recovery state…', true);
+  try {
+    // Phase H: The fetchRecoveryState endpoint is added to the web server
+    const res = await fetch('/api/recovery/state');
+    if (res.status === 503) {
+      showStatus('fetch-status', '⚠️ Utility server not connected. Ensure the utility server is configured in agent settings.', false);
+      return;
+    }
+    const data = await res.json();
+    if (!data || data.notFound || !data.identity) {
+      showStatus('fetch-status', '❌ No recovery data found — identity may not be registered on any utility server.', false);
+      return;
+    }
+    displayRecoveryState(data);
+    showStatus('fetch-status', '✅ Recovery state loaded successfully.', true);
+  } catch (e) {
+    showStatus('fetch-status', '❌ Error: ' + e.message, false);
+  }
+}
+
+function displayRecoveryState(data) {
+  if (data.identity) {
+    document.getElementById('identity-section').style.display = 'block';
+    const i = data.identity;
+    document.getElementById('identity-data').innerHTML = `
+      <p><strong>UUID:</strong> ${i.uuid}</p>
+      <p><strong>Role:</strong> ${i.role}</p>
+      <p><strong>Kind:</strong> ${i.subjectKind ?? 'unknown'}</p>
+      <p><strong>Name:</strong> ${i.name ?? '(none)'}</p>
+      <p><strong>Peer ID:</strong> ${i.peerId ?? '(none)'}</p>
+      <p><strong>Created:</strong> ${i.createdAt ? new Date(i.createdAt * 1000).toISOString() : 'unknown'}</p>
+      <p><strong>VID:</strong> ${i.vid ?? '(none)'}</p>
+    `;
+  }
+
+  if (data.didDocuments) {
+    document.getElementById('dids-section').style.display = 'block';
+    document.getElementById('dids-data').innerHTML = renderTable(
+      data.didDocuments,
+      ['did', 'method', 'isPrimary', 'status']
+    );
+  }
+
+  if (data.publicKeys) {
+    document.getElementById('keys-section').style.display = 'block';
+    document.getElementById('keys-data').innerHTML = renderTable(
+      data.publicKeys,
+      ['uuid', 'keyType', 'rotationVersion', 'createdAt']
+    );
+  }
+
+  if (data.credentials) {
+    document.getElementById('creds-section').style.display = 'block';
+    document.getElementById('creds-data').innerHTML = renderTable(
+      data.credentials,
+      ['vcType', 'status', 'validFrom', 'validUntil']
+    );
+  }
+
+  if (data.memberships) {
+    document.getElementById('mems-section').style.display = 'block';
+    document.getElementById('mems-data').innerHTML = renderTable(
+      data.memberships,
+      ['communityIdentityUuid', 'role', 'status']
+    );
+  }
+
+  if (data.relationships) {
+    document.getElementById('rels-section').style.display = 'block';
+    document.getElementById('rels-data').innerHTML = renderTable(
+      data.relationships,
+      ['remoteIdentityUuid', 'direction', 'status']
+    );
+  }
+
+  if (data.rotationLog) {
+    document.getElementById('rot-section').style.display = 'block';
+    document.getElementById('rot-data').innerHTML = renderTable(
+      data.rotationLog,
+      ['version', 'createdAt']
+    );
+  }
+}
+
+async function lookupOtherDid() {
+  const did = prompt('Enter the DID to look up:');
+  if (!did) return;
+  showStatus('fetch-status', 'Looking up identity…', true);
+  try {
+    const res = await fetch(`/api/recovery/lookup?did=${encodeURIComponent(did)}`);
+    const data = await res.json();
+    document.getElementById('lookup-section').style.display = 'block';
+    if (!data || !data.found) {
+      document.getElementById('lookup-result').innerHTML = '<p class="muted">Identity not found.</p>';
+    } else {
+      document.getElementById('lookup-result').innerHTML = `
+        <p><strong>DID:</strong> ${data.did ?? 'unknown'}</p>
+        <p><strong>DidDocument:</strong></p>
+        <pre>${JSON.stringify(data.didDocument, null, 2)}</pre>
+      `;
+    }
+    showStatus('fetch-status', '✅ Lookup complete.', true);
+  } catch (e) {
+    showStatus('fetch-status', '❌ Error: ' + e.message, false);
+  }
+}
+</script>
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+</body>
+</html>

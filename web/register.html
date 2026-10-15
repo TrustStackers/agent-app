@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VTAs — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .result-card { display: none; }
+  .key-card { background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; padding: 10px 14px; margin: 6px 0; }
+  .key-label { font-size: 10px; text-transform: uppercase; color: #64748b; margin-bottom: 4px; letter-spacing: 0.5px; }
+  .entity-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #1e2535; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: #1e3a5f; color: #93c5fd; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; flex-shrink: 0; }
+  .name { font-weight: 600; font-size: 14px; }
+  .meta { font-size: 11px; color: #64748b; }
+  .spacer { flex: 1; }
+  .hint { font-size: 11px; color: #64748b; margin-top: 4px; }
+  .error { background: #7f1d1d; color: #fca5a5; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; display: none; }
+  .two-col { display: flex; gap: 20px; flex-wrap: wrap; }
+  .two-col > * { flex: 1; min-width: 320px; }
+  .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+  .stat { flex: 1; min-width: 100px; background: #0a0e17; border: 1px solid #1e2535; border-radius: 8px; padding: 14px; text-align: center; }
+  .stat .num { font-size: 22px; font-weight: 800; color: #60a5fa; }
+  .stat .lbl { font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; margin-top: 2px; }
+</style>
+</head>
+<body data-page="vtas" data-subpage="register">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div id="status-area"></div>
+  <div id="error" class="error"></div>
+
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h2>Register a Verified Trust Agent (VTA)</h2>
+        <p class="muted" style="margin-bottom:16px;">Register a human VTA (your primary identity) or an AI Agent VTA (delegated from your active VTA). Each VTA gets a real <code>did:peer:4</code> identity with Ed25519/X25519 keys, encrypted at rest under the passphrase you provide.</p>
+        <form id="vta-form">
+          <div class="form-group">
+            <label for="vta-name">Display Name</label>
+            <input type="text" id="vta-name" placeholder="e.g. Alice Nakamura, Acme Cooperative, Scheduling Bot" required>
+          </div>
+          <div class="form-group">
+            <label for="vta-kind">Subject Kind (<code>identities.subject_kind</code>)</label>
+             <select id="vta-kind">
+               <option value="human">👤 Human</option>
+               <option value="ai_agent">🤖 AI Agent (delegated)</option>
+             </select>
+          </div>
+          <div class="form-group">
+            <label for="vta-passphrase">Encryption Passphrase (min 8 characters)</label>
+            <input type="password" id="vta-passphrase" placeholder="At least 8 characters" required minlength="8">
+            <div class="hint">Used to encrypt this VTA's private keys (Argon2id + AES-256-GCM) in the <code>keys</code> table. Write it down — there is no recovery if you lose it.</div>
+          </div>
+          <button type="submit" class="btn btn-primary" id="submit-btn">Generate Identity →</button>
+        </form>
+      </div>
+
+      <div class="card result-card" id="result-card">
+        <h2>✅ VTA Registered</h2>
+        <p class="muted" style="margin-bottom:12px;">Real Ed25519/X25519 key material was generated, encrypted under your passphrase, and persisted in the database.</p>
+        <div id="result-content"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Existing VTAs</h2>
+        <div class="stat-row" id="stats-row" style="display:none;">
+          <div class="stat"><div class="num" id="stat-human">—</div><div class="lbl">Human</div></div>
+          <div class="stat"><div class="num" id="stat-ai">—</div><div class="lbl">AI Agent</div></div>
+          <div class="stat"><div class="num" id="stat-total">—</div><div class="lbl">Total</div></div>
+        </div>
+        <div id="vta-list"></div>
+      </div>
+
+      <div class="card">
+        <h2>Next Steps</h2>
+        <p class="muted" style="font-size:13px; margin-bottom:8px;">Once registered, you can:</p>
+        <ul style="margin-left:18px; color:#94a3b8; font-size:13px; line-height:1.8;">
+          <li><a href="profiles.html" style="color:#60a5fa;">Manage profiles & claims →</a></li>
+          <li><a href="credentials.html" style="color:#60a5fa;">Issue & verify credentials →</a></li>
+          <li><a href="chat.html" style="color:#60a5fa;">Chat with verified peers →</a></li>
+          <li>Generate an OOBI to connect with others (use the dashboard)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+var KIND_ICON = { human: '👤', organization: '🏢', ai_agent: '🤖', object: '📦' };
+var KIND_LABEL = { human: 'Human', organization: 'Organization', ai_agent: 'AI Agent', object: 'Object' };
+
+function showStatus(msg, type) {
+  var el = document.getElementById('status-area');
+  el.innerHTML = '<div class="status-msg '+type+'" style="display:block; padding:10px 14px; border-radius:6px; margin-bottom:8px;">'+msg+'</div>';
+  setTimeout(function(){ el.innerHTML = ''; }, 5000);
+}
+
+function esc(s) { var d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+function short(s, n) { if (!s) return ''; return s.length > n ? s.slice(0, n) + '…' : s; }
+function initials(n) { return (n || '?').split(/\s+/).filter(Boolean).slice(0,2).map(function(w){return w[0].toUpperCase();}).join(''); }
+
+async function apiGet(path) { var r = await fetch(path); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+async function apiPost(path, body) { var r = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }); var d = await r.json(); if (!r.ok) throw new Error(d?.error?.message || 'HTTP '+r.status); return d; }
+
+async function loadVtaList() {
+  var el = document.getElementById('vta-list');
+  var stats = document.getElementById('stats-row');
+  try {
+    var vtas = await apiGet('/api/agents');
+    if (!vtas.length) { el.innerHTML = '<p class="muted">No VTAs registered yet. Create your first VTA above.</p>'; stats.style.display = 'none'; return; }
+    stats.style.display = '';
+    var counts = { human:0, ai_agent:0 };
+    vtas.forEach(function(v) { if (counts.hasOwnProperty(v.subjectKind)) counts[v.subjectKind]++; });
+    document.getElementById('stat-human').textContent = counts.human;
+    document.getElementById('stat-ai').textContent = counts.ai_agent;
+    document.getElementById('stat-total').textContent = vtas.length;
+    el.innerHTML = vtas.map(function(v) {
+      return '<div class="entity-row"><div class="avatar">'+initials(v.name)+'</div><div><div class="name">'+esc(v.name || '(unnamed)')+' '+(KIND_ICON[v.subjectKind]||'')+'</div><div class="meta"><code>'+short(v.did,40)+'</code> · '+v.custody+' · '+(KIND_LABEL[v.subjectKind]||v.subjectKind)+'</div></div><span class="spacer"></span><span class="badge badge-green">'+v.custody+'</span></div>';
+    }).join('');
+  } catch (err) { el.innerHTML = '<p class="muted">Failed to load VTAs: '+esc(err.message)+'</p>'; }
+}
+
+document.getElementById('vta-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  var errEl = document.getElementById('error');
+  var btn = document.getElementById('submit-btn');
+  errEl.style.display = 'none';
+  var name = document.getElementById('vta-name').value.trim();
+  var subjectKind = document.getElementById('vta-kind').value;
+  var passphrase = document.getElementById('vta-passphrase').value;
+  if (!name || !passphrase) return;
+  btn.disabled = true; btn.textContent = 'Generating…';
+  try {
+    var result = await apiPost('/api/agents', { name:name, subjectKind:subjectKind, passphrase:passphrase });
+
+    // Check if there's already an active VTA
+    var identityCheck;
+    try { identityCheck = await apiGet('/api/identity'); } catch(_) { identityCheck = { active: false }; }
+
+    var card = document.getElementById('result-card');
+    var content = document.getElementById('result-content');
+    content.innerHTML = '<div class="key-card"><div class="key-label">identities.id / subject_kind</div>'+result.identity.id+' · '+result.identity.subjectKind+'</div><div class="key-card"><div class="key-label">Primary DID ('+esc(result.didDocument.method)+')</div>'+esc(result.didDocument.did)+'</div><div class="key-card"><div class="key-label">Ed25519 Signing Public Key (base64)</div>'+esc(result.publicKeys.ed25519)+'</div><div class="key-card"><div class="key-label">X25519 Encryption Public Key (base64)</div>'+esc(result.publicKeys.x25519)+'</div>';
+    card.style.display = 'block';
+
+    if (identityCheck && identityCheck.active) {
+      // Already logged in — don't switch. Just show success and refresh list.
+      showStatus('VTA registered: ' + (subjectKind === 'ai_agent' ? 'AI Agent delegated to ' + identityCheck.name : name), 'success');
+      btn.disabled = false;
+      btn.textContent = 'Generate Identity →';
+      loadVtaList();
+    } else {
+      // No VTA active — auto-activate and redirect to dashboard (first-time setup)
+      btn.textContent = 'Activating…';
+      try {
+        await apiPost('/api/activate', { name: name, passphrase: passphrase });
+        window.location.href = 'dashboard.html';
+      } catch (activateErr) {
+        // Activation failed — show result but let the user activate manually
+        errEl.style.display = 'block';
+        errEl.textContent = 'VTA registered but activation failed: ' + activateErr.message + '. Go to Dashboard to activate.';
+        btn.disabled = false;
+        btn.textContent = 'Generate Identity →';
+      }
+    }
+  } catch (err) { errEl.style.display = 'block'; errEl.textContent = err.message; }
+  finally { if (btn.textContent === 'Generating…') { btn.disabled = false; btn.textContent = 'Generate Identity →'; } }
+});
+
+// This page manages an active VTA — require authentication before rendering.
+(async function() {
+  if (!(await requireActiveAgent())) return;
+  loadVtaList();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Trust Agent — Names</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="names">
+  <header class="header">
+    <h1>My Trust Agent</h1>
+    <nav id="main-nav"></nav>
+  </header>
+
+  <div class="container">
+
+    <!-- Register a Name -->
+    <div class="card">
+      <h2>Register a Name</h2>
+      <p class="muted">Claim a human-readable name for your VTA. The name is cryptographically bound to your DID via <code>alsoKnownAs</code> in a new rotation entry, then registered with the utility server's name registry.</p>
+      <div class="form-group">
+        <label for="ns">Namespace</label>
+        <input id="ns" placeholder="p2pts" value="p2pts">
+      </div>
+      <div class="form-group">
+        <label for="nm">Name</label>
+        <input id="nm" placeholder="alice">
+      </div>
+      <button class="btn btn-primary" id="register-btn" onclick="registerName()">Register</button>
+      <div id="register-result" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Resolve a Name -->
+    <div class="card">
+      <h2>Resolve a Name</h2>
+      <p class="muted">Look up a name URI to find the bound DID and connectable peer. The result will display the resolved peer ID and multiaddrs if the name is registered.</p>
+      <div class="form-group">
+        <label for="r-nameuri">Name URI</label>
+        <input id="r-nameuri" placeholder="vta:p2pts:alice" style="width:100%;">
+      </div>
+      <button class="btn btn-primary" id="resolve-btn" onclick="resolveName()">Resolve</button>
+      <div id="resolve-result" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- My Registered Names -->
+    <div class="card">
+      <h2>My Registered Names</h2>
+      <p class="muted">Names currently bound to your VTA's DID via <code>alsoKnownAs</code>.</p>
+      <button class="btn btn-secondary" onclick="loadMyNames()">Refresh</button>
+      <div id="my-names" style="margin-top:12px;">
+        <p class="muted">Click Refresh to load.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+  <script>
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str ?? '';
+      return div.innerHTML;
+    }
+
+    function showResult(elId, html, isError) {
+      const el = document.getElementById(elId);
+      el.innerHTML = html;
+      el.style.color = isError ? 'var(--danger, #dc3545)' : '';
+    }
+
+    // ── Register ────────────────────────────────────────────────────────
+
+    async function registerName() {
+      const ns = document.getElementById('ns').value.trim();
+      const nm = document.getElementById('nm').value.trim();
+      const btn = document.getElementById('register-btn');
+      const resultEl = document.getElementById('register-result');
+
+      if (!ns || !nm) {
+        showResult('register-result', '<p class="muted">Namespace and name are required.</p>', true);
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Checking availability…';
+      resultEl.innerHTML = '<p class="muted">Checking name availability with utility server…</p>';
+
+      try {
+        const res = await fetch('/api/names/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ namespace: ns, name: nm }),
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+          resultEl.innerHTML = `
+            <div style="background:#d4edda;border:1px solid #c3e6cb;padding:12px;border-radius:4px;">
+              <strong>✅ Name registered!</strong><br>
+              <code>vta:${escapeHtml(ns)}:${escapeHtml(nm)}</code> is now bound to your DID.<br>
+              <span class="muted">The name was verified as available, cryptographically bound to your DID via alsoKnownAs, and registered with the utility server.</span>
+            </div>`;
+          // Refresh the name list
+          loadMyNames();
+        } else if (data.reason && data.reason.includes('not available')) {
+          // Name taken — show retry UI
+          resultEl.innerHTML = `
+            <div style="background:#fff3cd;border:1px solid #ffeaa7;padding:12px;border-radius:4px;">
+              <strong>⚠️ Name not available</strong><br>
+              ${escapeHtml(data.reason)}<br>
+              <span class="muted">Please try a different name.</span>
+            </div>`;
+        } else if (data.reason && data.reason.includes('cannot be reached')) {
+          // Server unreachable
+          resultEl.innerHTML = `
+            <div style="background:#f8d7da;border:1px solid #f5c6cb;padding:12px;border-radius:4px;">
+              <strong>❌ Server unreachable</strong><br>
+              ${escapeHtml(data.reason)}
+            </div>`;
+        } else {
+          resultEl.innerHTML = `
+            <div style="background:#f8d7da;border:1px solid #f5c6cb;padding:12px;border-radius:4px;">
+              <strong>❌ Registration failed</strong><br>
+              ${escapeHtml(data.reason || 'Unknown error')}
+            </div>`;
+        }
+      } catch (err) {
+        showResult('register-result', `<p>Error: ${escapeHtml(err.message)}</p>`, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Register';
+      }
+    }
+
+    // ── Resolve ─────────────────────────────────────────────────────────
+
+    async function resolveName() {
+      const nameUri = document.getElementById('r-nameuri').value.trim();
+      const btn = document.getElementById('resolve-btn');
+      const resultEl = document.getElementById('resolve-result');
+
+      if (!nameUri) {
+        showResult('resolve-result', '<p class="muted">Enter a name URI like vta:p2pts:alice</p>', true);
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Resolving…';
+      resultEl.innerHTML = '<p class="muted">Resolving…</p>';
+
+      try {
+        const res = await fetch(`/api/names/resolve?nameUri=${encodeURIComponent(nameUri)}`);
+        const data = await res.json();
+
+        if (data.notFound) {
+          resultEl.innerHTML = `<p class="muted">Name "${escapeHtml(nameUri)}" not found in local cache or utility server registry.</p>`;
+        } else if (data.peerId) {
+          const cardHtml = data.rCard ? `
+            <div style="margin-top:12px;padding:12px;background:#f0f4ff;border:1px solid #d0d7f0;border-radius:4px;">
+              <strong style="font-size:0.9rem;">🪪 R-Card: ${escapeHtml(data.rCard.label)}</strong>
+              ${data.rCard.purpose ? ` · <em>${escapeHtml(data.rCard.purpose)}</em>` : ''}
+              <span class="badge" style="font-size:0.7rem;">${escapeHtml(data.rCard.visibility)}</span>
+              ${data.rCard.claims && data.rCard.claims.length > 0 ? `
+                <table style="width:100%;margin-top:6px;font-size:0.8rem;border-collapse:collapse;">
+                  ${data.rCard.claims.map(c => `
+                    <tr>
+                      <td style="padding:2px 8px;border-bottom:1px solid #d0d7f0;font-weight:600;">${escapeHtml(c.key)}</td>
+                      <td style="padding:2px 8px;border-bottom:1px solid #d0d7f0;">${c.commitment ? '<code>commitment:' + escapeHtml(c.commitment.substring(0,12)) + '…</code>' : (c.value ? escapeHtml(String(c.value)) : '—')}</td>
+                      <td style="padding:2px 8px;border-bottom:1px solid #d0d7f0;font-size:0.7rem;">${escapeHtml(c.disclosure)}</td>
+                    </tr>
+                  `).join('')}
+                </table>
+              ` : '<p class="muted" style="margin-top:4px;font-size:0.8rem;">No public claims</p>'}
+            </div>
+          ` : '';
+          resultEl.innerHTML = `
+            <div style="background:#d4edda;border:1px solid #c3e6cb;padding:12px;border-radius:4px;color:#155724;">
+              <strong>✅ Resolved</strong><br>
+              <div style="margin-top:8px;">
+                <div><strong>DID:</strong> <code style="font-size:0.75rem;word-break:break-all;">${escapeHtml(data.did)}</code></div>
+                <div><strong>Peer ID:</strong> <code style="font-size:0.85rem;">${escapeHtml(data.peerId)}</code></div>
+                <div><strong>Multiaddrs:</strong> ${(data.multiaddrs || []).map(a => `<code style="font-size:0.75rem;">${escapeHtml(a)}</code>`).join('<br>') || '<span class="muted">none</span>'}</div>
+              </div>
+              ${cardHtml}
+            </div>`;
+        } else {
+          resultEl.innerHTML = `<pre style="font-size:0.85rem;">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+        }
+      } catch (err) {
+        showResult('resolve-result', `<p>Error: ${escapeHtml(err.message)}</p>`, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Resolve';
+      }
+    }
+
+    // ── My Names ────────────────────────────────────────────────────────
+
+    async function loadMyNames() {
+      const el = document.getElementById('my-names');
+      try {
+        const res = await fetch('/api/names');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const names = await res.json();
+
+        if (!names || names.length === 0) {
+          el.innerHTML = '<p class="muted">No names registered yet. Use the form above to claim a name.</p>';
+          return;
+        }
+
+        el.innerHTML = `
+          <table style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr style="text-align:left;border-bottom:1px solid var(--border);">
+                <th style="padding:0.5rem;">Name URI</th>
+                <th style="padding:0.5rem;">Namespace</th>
+                <th style="padding:0.5rem;">Name</th>
+                <th style="padding:0.5rem;">Binding</th>
+                <th style="padding:0.5rem;">DID</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${names.map(n => `
+                <tr style="border-bottom:1px solid var(--border-light);">
+                  <td style="padding:0.5rem;"><code>${escapeHtml(n.nameUri)}</code></td>
+                  <td style="padding:0.5rem;">${escapeHtml(n.namespace)}</td>
+                  <td style="padding:0.5rem;">${escapeHtml(n.name)}</td>
+                  <td style="padding:0.5rem;"><span class="badge">${escapeHtml(n.bindingType)}</span></td>
+                  <td style="padding:0.5rem;"><code style="font-size:0.8rem;">${escapeHtml((n.did || '').substring(0, 40))}…</code></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        el.innerHTML = `<p class="muted">Failed to load names: ${escapeHtml(err.message)}</p>`;
+      }
+    }
+
+    // Load names on page load
+    loadMyNames();
+  </script>
+</body>
+</html>

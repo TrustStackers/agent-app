@@ -1,0 +1,33 @@
+{
+  "name": "agent-app",
+  "version": "0.1.0",
+  "description": "P2P Trust Stack thick agent — TUI + web UI for identity management, profiles, credentials, and P2P communication over TSP.",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "tui": "CEREMONY_TRACE=1 P2PTS_LOG_LEVEL=info node --experimental-strip-types --loader ./test-loader.mjs tui/app.ts",
+    "web": "CEREMONY_TRACE=1 P2PTS_LOG_LEVEL=info node --experimental-strip-types --loader ./test-loader.mjs web/server.ts",
+    "start": "npm run web",
+    "init:bootstrap": "node --experimental-strip-types --loader ./test-loader.mjs ./scripts/init-bootstrap-env.ts"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@fastify/static": "^8.0.0",
+    "@p2p-trust-stack/app-api": "^0.1.0",
+    "@p2p-trust-stack/core": "^0.1.0",
+    "blessed": "^0.1.81",
+    "clipboardy": "^4.0.0",
+    "cytoscape": "^3.30.3",
+    "fastify": "^5.10.0",
+    "qrcode-terminal": "^0.12.0",
+    "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "@libp2p/crypto": "^5.1.21",
+    "@libp2p/peer-id": "^6.0.11",
+    "@types/blessed": "^0.1.27",
+    "@types/node": "^22.13.0",
+    "typescript": "^6.0.3"
+  }
+}

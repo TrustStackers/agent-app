@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Profiles — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .entity-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #1e2535; }
+  .avatar { width: 32px; height: 32px; border-radius: 50%; background: #334155; color: #94a3b8; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; flex-shrink: 0; }
+  .name { font-weight: 600; font-size: 14px; }
+  .meta { font-size: 11px; color: #64748b; }
+  .spacer { flex: 1; }
+  .two-col { display: flex; gap: 20px; flex-wrap: wrap; }
+  .two-col > * { flex: 1; min-width: 320px; }
+  .error { background: #7f1d1d; color: #fca5a5; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; display: none; }
+  pre { font-family: 'SF Mono', Monaco, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  .btn-sm { padding: 4px 10px; font-size: 11px; }
+  h4 { color: #94a3b8; font-size: 13px; margin: 12px 0 6px; }
+  .status-ok { color: #34d399; background: #065f46; padding: 10px; border-radius: 6px; margin: 8px 0; display: none; }
+</style>
+</head>
+<body data-page="vtas" data-subpage="profiles">
+
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+
+<div class="container">
+  <div id="error" class="error"></div>
+  <div id="success" class="status-ok"></div>
+
+  <div class="card">
+    <h2>Active VTA</h2>
+    <p id="active-vta-info" class="muted">Loading…</p>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <div class="card">
+        <h2>Profiles</h2>
+        <div id="profile-list"><p class="muted">Loading profiles…</p></div>
+      </div>
+
+      <div class="card">
+        <h2>Create New Profile</h2>
+        <form id="profile-form">
+          <div class="form-group">
+            <label for="pf-label">Profile Label</label>
+            <input type="text" id="pf-label" placeholder="e.g. Professional, Pseudonymous, Family" required>
+          </div>
+          <div class="form-group">
+            <label for="pf-purpose">Purpose / Context Note</label>
+            <input type="text" id="pf-purpose" placeholder="What is this profile used for?">
+          </div>
+          <div class="form-group">
+            <label for="pf-visibility">Visibility</label>
+            <select id="pf-visibility">
+              <option value="private">Private</option>
+              <option value="selective">Selective (shared per-relationship)</option>
+              <option value="public">Public</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary">Create Profile</button>
+        </form>
+      </div>
+    </div>
+
+    <div>
+      <div class="card" id="claims-card" style="display:none;">
+        <h2>Claims</h2>
+        <div id="claims-list"><p class="muted">Select a profile to manage claims.</p></div>
+
+        <h4>Add a Claim</h4>
+        <form id="claim-form">
+          <div class="form-group">
+            <label for="claim-key">Key</label>
+            <input type="text" id="claim-key" placeholder="e.g. displayName, title, email" required>
+          </div>
+          <div class="form-group">
+            <label for="claim-value">Value</label>
+            <input type="text" id="claim-value" placeholder="e.g. Alice N., Plumber, alice@example.com">
+          </div>
+          <div class="form-group">
+            <label for="claim-disclosure">Disclosure Level</label>
+            <select id="claim-disclosure">
+              <option value="always">Always share</option>
+              <option value="discretionary" selected>Share on request (discretionary)</option>
+              <option value="never">Never share</option>
+              <option value="zkp_only">Commitment only (zkp_only)</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm">Add Claim</button>
+        </form>
+      </div>
+
+      <div class="card" id="card-card" style="display:none;">
+        <h2>R-Card Preview</h2>
+        <div class="form-group">
+          <label for="requested-keys">Discretionary keys to request (comma-separated)</label>
+          <input type="text" id="requested-keys" placeholder="e.g. email,title">
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="request-all-discretionary" checked style="width:auto;">
+          <label for="request-all-discretionary" style="margin:0;">Include all discretionary claims (own profile)</label>
+        </div>
+        <button class="btn btn-outline btn-sm" id="preview-card-btn">Preview Card</button>
+        <pre id="card-preview" style="margin-top:12px;background:#0a0e17;padding:10px;border-radius:6px;display:none;"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+(function() {
+  'use strict';
+  var activeProfileId = null;
+  var activeVtaName = '';
+
+  function showError(msg) { var e = document.getElementById('error'); e.style.display = 'block'; e.textContent = msg; setTimeout(function(){ e.style.display = 'none'; }, 5000); }
+  function showSuccess(msg) { var s = document.getElementById('success'); s.style.display = 'block'; s.textContent = msg; setTimeout(function(){ s.style.display = 'none'; }, 3000); }
+
+  async function apiGet(path) {
+    var r = await fetch(path);
+    if (!r.ok) { var b = await r.text(); throw new Error(b); }
+    return r.json();
+  }
+  async function apiPost(path, body) {
+    var r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    var d = await r.json();
+    if (!r.ok) throw new Error((d && d.error && d.error.message) || 'HTTP ' + r.status);
+    return d;
+  }
+  async function apiPut(path, body) {
+    var r = await fetch(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    var d = await r.json();
+    if (!r.ok) throw new Error((d && d.error && d.error.message) || 'HTTP ' + r.status);
+    return d;
+  }
+  async function apiDelete(path) {
+    var r = await fetch(path, { method: 'DELETE' });
+    if (!r.ok) try { var b = await r.json(); throw new Error(b && b.error && b.error.message); } catch(e) { if (e.message) throw e; }
+  }
+
+  // ── Load the active VTA info and its profiles ─────────────────────────
+  async function initActiveVta() {
+    try {
+      var identity = await apiGet('/api/identity');
+      if (!identity.active) {
+        window.location.href = 'index.html';
+        return;
+      }
+      activeVtaName = identity.name;
+      var kindIcon = identity.meta && identity.meta.subjectKind === 'ai_agent' ? '🤖' : '👤';
+      var kindLabel = identity.meta && identity.meta.subjectKind === 'ai_agent' ? 'AI Agent' : 'Human';
+      var delegateInfo = '';
+      if (identity.meta && identity.meta.delegatedBy) {
+        delegateInfo = ' (delegated by ' + identity.meta.delegatedBy + ')';
+      }
+      document.getElementById('active-vta-info').innerHTML =
+        '<strong>' + kindIcon + ' ' + identity.name + '</strong> <span class="muted">(' + kindLabel + ')' + delegateInfo + '</span>';
+      await loadProfiles();
+    } catch(err) {
+      showError('Failed to load active VTA: ' + err.message);
+      window.location.href = 'index.html';
+    }
+  }
+
+  // ── Load profiles (scoped to active VTA by the backend) ──────────────
+  async function loadProfiles() {
+    var el = document.getElementById('profile-list');
+    try {
+      var profiles = await apiGet('/api/profiles');
+      if (!profiles.length) { el.innerHTML = '<p class="muted">No profiles yet — create one below.</p>'; return; }
+
+      el.innerHTML = profiles.map(function(p) {
+        var html = '<div class="entity-row">';
+        html += '<div class="avatar">' + (p.label || '?').slice(0,2).toUpperCase() + '</div>';
+        html += '<div><div class="name">' + p.label + (p.isDefault ? ' <span class="badge badge-green">Default</span>' : '') + '</div>';
+        html += '<div class="meta">' + (p.purpose || 'No purpose set') + ' · ' + p.visibility + '</div></div>';
+        html += '<span class="spacer"></span>';
+        html += '<button class="btn btn-outline btn-sm" data-select="' + p.uuid + '" data-label="' + p.label + '">Manage</button>';
+        if (!p.isDefault) html += '<button class="btn btn-outline btn-sm" data-set-default="' + p.uuid + '">Set Default</button>';
+        if (profiles.length > 1) html += '<button class="btn btn-danger btn-sm" data-remove="' + p.uuid + '">Remove</button>';
+        html += '</div>';
+        return html;
+      }).join('');
+
+      // Select: manage claims
+      el.querySelectorAll('[data-select]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          activeProfileId = this.getAttribute('data-select');
+          document.getElementById('claims-card').style.display = 'block';
+          document.getElementById('card-card').style.display = 'block';
+          document.getElementById('card-preview').style.display = 'none';
+          loadClaims();
+        });
+      });
+      // Set default
+      el.querySelectorAll('[data-set-default]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          var id = this.getAttribute('data-set-default');
+          try { await apiPut('/api/profiles/' + id, { setDefault: true }); loadProfiles(); } catch(err) { showError(err.message); }
+        });
+      });
+      // Remove
+      el.querySelectorAll('[data-remove]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          var id = this.getAttribute('data-remove');
+          if (!confirm('Remove this profile? All claims will be deleted.')) return;
+          try {
+            await apiDelete('/api/profiles/' + id);
+            if (activeProfileId === id) { activeProfileId = null; document.getElementById('claims-card').style.display = 'none'; document.getElementById('card-card').style.display = 'none'; }
+            loadProfiles();
+          } catch(err) { showError(err.message); }
+        });
+      });
+    } catch(err) { showError('Failed to load profiles: ' + err.message); }
+  }
+
+  // ── Load claims ──────────────────────────────────────────────────────
+  async function loadClaims() {
+    var el = document.getElementById('claims-list');
+    if (!activeProfileId) return;
+    try {
+      var claims = await apiGet('/api/profiles/' + activeProfileId + '/claims');
+      if (!claims.length) { el.innerHTML = '<p class="muted">No claims yet.</p>'; return; }
+      el.innerHTML = claims.map(function(c) {
+        var vd = c.disclosure === 'zkp_only' ? '<span class="muted">commitment: ' + (c.commitment || '').slice(0,16) + '…</span>' : (c.claimValue || '');
+        return '<div class="entity-row"><div><div class="name"><code>' + c.claimKey + '</code> <span class="badge badge-yellow">' + c.disclosure + '</span></div><div class="meta">' + vd + '</div></div><span class="spacer"></span><button class="btn btn-danger btn-sm" data-remove-claim="' + c.uuid + '">Remove</button></div>';
+      }).join('');
+      el.querySelectorAll('[data-remove-claim]').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          var id = this.getAttribute('data-remove-claim');
+          try { await apiDelete('/api/profiles/claims/' + id); loadClaims(); } catch(err) { showError(err.message); }
+        });
+      });
+    } catch(err) { showError('Failed to load claims: ' + err.message); }
+  }
+
+  // ── Create profile ───────────────────────────────────────────────────
+  document.getElementById('profile-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    var label = document.getElementById('pf-label').value.trim();
+    var purpose = document.getElementById('pf-purpose').value.trim();
+    var visibility = document.getElementById('pf-visibility').value;
+    if (!label) { showError('Label is required.'); return; }
+
+    console.log('[profiles] Creating profile:', { label: label, purpose: purpose, visibility: visibility });
+
+    try {
+      var result = await apiPost('/api/profiles', { label: label, purpose: purpose, visibility: visibility });
+      console.log('[profiles] Profile created:', result);
+      document.getElementById('pf-label').value = '';
+      document.getElementById('pf-purpose').value = '';
+      showSuccess('Profile "' + label + '" created.');
+      await loadProfiles();
+    } catch(err) {
+      console.error('[profiles] Create profile failed:', err);
+      showError('Failed to create profile: ' + err.message);
+    }
+  });
+
+  // ── Add claim ────────────────────────────────────────────────────────
+  document.getElementById('claim-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    if (!activeProfileId) { showError('Select a profile first.'); return; }
+    var key = document.getElementById('claim-key').value.trim();
+    var val = document.getElementById('claim-value').value.trim();
+    var disc = document.getElementById('claim-disclosure').value;
+    if (!key) { showError('Claim key is required.'); return; }
+
+    console.log('[profiles] Adding claim:', { profileId: activeProfileId, claimKey: key, claimValue: val, disclosure: disc });
+
+    try {
+      await apiPost('/api/profiles/' + activeProfileId + '/claims', { claimKey: key, claimValue: val || null, disclosure: disc });
+      document.getElementById('claim-key').value = '';
+      document.getElementById('claim-value').value = '';
+      showSuccess('Claim "' + key + '" added.');
+      await loadClaims();
+    } catch(err) {
+      console.error('[profiles] Add claim failed:', err);
+      showError('Failed to add claim: ' + err.message);
+    }
+  });
+
+  // ── Preview R-Card ───────────────────────────────────────────────────
+  document.getElementById('preview-card-btn').addEventListener('click', async function() {
+    if (!activeProfileId) return;
+    var keys = document.getElementById('requested-keys').value.trim();
+    // Own-profile convenience: by default (checkbox on) request ALL of this
+    // profile's discretionary claim keys so the preview shows the full card.
+    if (document.getElementById('request-all-discretionary').checked) {
+      try {
+        var allClaims = await apiGet('/api/profiles/' + activeProfileId + '/claims');
+        var disc = allClaims.filter(function(c) { return c.disclosure === 'discretionary'; })
+                             .map(function(c) { return c.claimKey; });
+        var merged = Array.from(new Set((keys ? keys.split(',') : []).map(function(k) { return k.trim(); }).filter(function(k) { return k; }).concat(disc)));
+        keys = merged.join(',');
+      } catch(err) { /* fall back to typed keys */ }
+    }
+    var qs = keys ? '?keys=' + encodeURIComponent(keys) : '';
+    try {
+      var card = await apiGet('/api/profiles/' + activeProfileId + '/card' + qs);
+      var pre = document.getElementById('card-preview');
+      pre.textContent = JSON.stringify(card, null, 2);
+      pre.style.display = 'block';
+    } catch(err) { showError(err.message); }
+  });
+
+  // ── Boot ─────────────────────────────────────────────────────────────
+  async function init() {
+    var active = await requireActiveAgent();
+    if (!active) return;
+    initActiveVta();
+  }
+  init();
+})();
+</script>
+</body>
+</html>

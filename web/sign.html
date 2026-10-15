@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en" data-page="sign">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Utility Server Sign-in — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .sign-container { max-width: 600px; margin: 40px auto; }
+  .sign-container label { display: block; margin: 1rem 0 0.3rem; font-weight: 600; font-size: 0.9rem; }
+  .sign-container textarea { width: 100%; padding: 0.6rem; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; font-family: monospace; font-size: 0.9rem; }
+  #result { margin-top: 1rem; padding: 1rem; border-radius: 6px; background: #1e293b; border: 1px solid #334155; display: none; }
+  #result.visible { display: block; }
+  #sig { word-break: break-all; font-family: monospace; font-size: 0.85rem; color: #6ee7b7; }
+  .error { color: #fca5a5; }
+</style>
+</head>
+<body data-page="sign">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div class="card sign-container">
+    <h2>🔑 Utility Server Sign-in</h2>
+    <p class="muted">Authenticate to the Utility Server by signing the challenge nonce shown on its login page, then paste the resulting signature back into the server.</p>
+
+    <label for="msg">Challenge nonce</label>
+    <textarea id="msg" rows="3" placeholder="Paste the nonce from the utility server login page…"></textarea>
+
+    <button class="btn btn-primary" id="btn" onclick="doSign()" style="margin-top:12px;">Sign Nonce</button>
+
+    <div id="result">
+      <strong>Signature (base64):</strong>
+      <pre id="sig"></pre>
+      <small class="muted">Copy this and paste it into the utility server login page.</small>
+    </div>
+  </div>
+</div>
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+  async function doSign() {
+    const msg = document.getElementById('msg').value.trim();
+    const result = document.getElementById('result');
+    const sig = document.getElementById('sig');
+    const btn = document.getElementById('btn');
+
+    if (!msg) return;
+    btn.disabled = true;
+    btn.textContent = 'Signing…';
+
+    try {
+      const res = await fetch('/api/sign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'HTTP ' + res.status);
+      sig.textContent = body.signature;
+      result.classList.add('visible');
+    } catch (err) {
+      sig.innerHTML = '<span class="error">' + err.message + '</span>';
+      result.classList.add('visible');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Sign Nonce';
+    }
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  body.no-sidebar { padding-left: 0; }
+  .gate { max-width: 520px; margin: 0 auto; padding: 48px 16px; }
+  .gate-title { font-size: 22px; color: #60a5fa; text-align: center; }
+  .gate-sub { text-align: center; margin: 4px 0 24px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab { flex: 1; padding: 12px 16px; border-radius: 8px; border: 1px solid #1e2535; background: #121826; color: #94a3b8; cursor: pointer; font-size: 14px; font-weight: 600; }
+  .tab:hover { border-color: #2563eb; color: #e0e6ed; }
+  .tab.active { background: #1e3a5f; color: #e0e6ed; border-color: #2563eb; }
+  .agent-list-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; margin-bottom: 8px; cursor: pointer; }
+  .agent-list-item:hover { border-color: #2563eb; background: #121826; }
+  .agent-list-item.selected { border-color: #2563eb; background: #1e3a5f; }
+  .agent-list-item .icon { width: 36px; height: 36px; border-radius: 50%; background: #1e3a5f; color: #93c5fd; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+  .agent-list-item .info { flex: 1; }
+  .agent-list-item .name { font-weight: 600; font-size: 14px; }
+  .agent-list-item .vid { font-family: monospace; font-size: 11px; color: #64748b; }
+  .agent-list-item .arrow { color: #64748b; font-size: 18px; }
+  .passphrase-section { display: none; margin-top: 16px; }
+  .passphrase-section.visible { display: block; }
+  .error-msg { color: #f87171; margin-top: 8px; display: none; }
+  .hint { font-size: 11px; color: #64748b; margin-top: 4px; }
+</style>
+</head>
+<body class="no-sidebar">
+<div class="gate">
+  <h1 class="gate-title">My Trust Agent</h1>
+  <p class="gate-sub muted">Verified Trust Agent console</p>
+
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-tab="login" onclick="switchTab('login')">🔑 Log in with VTA</button>
+    <button class="tab" data-tab="register" onclick="switchTab('register')">➕ Register a VTA</button>
+    <button class="tab" data-tab="import" onclick="switchTab('import')">📥 Import seed phrase</button>
+  </div>
+
+  <div class="tab-panel" id="tab-login">
+    <div class="card">
+      <h2>Select Your Verified Trust Agent (VTA)</h2>
+      <p class="muted" style="margin-bottom:16px;">Choose the identity you want to operate as. Each VTA has its own keys, relationships, and credentials.</p>
+
+      <div id="agent-list">Loading VTAs…</div>
+
+      <div id="passphrase-section" class="passphrase-section">
+        <div class="form-group">
+          <label for="passphrase-input">Passphrase for <strong id="selected-name">—</strong></label>
+          <input type="password" id="passphrase-input" placeholder="Enter your passphrase" minlength="8" style="width:100%;">
+        </div>
+        <button class="btn btn-primary" id="activate-btn" onclick="activateAgent()" style="width:100%;">🔓 Unlock VTA</button>
+        <p id="activate-error" class="error-msg"></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-register" style="display:none;">
+    <div class="card">
+      <h2>Register a Verified Trust Agent (VTA)</h2>
+      <p class="muted" style="margin-bottom:16px;">Register a human VTA (your primary identity) or an AI Agent VTA (delegated from your active VTA). Each VTA gets a real <code>did:scid:vh</code> identity with Ed25519/X25519 keys, encrypted at rest under the passphrase you provide.</p>
+      <form id="vta-form">
+        <div class="form-group">
+          <label for="vta-name">Display Name</label>
+          <input type="text" id="vta-name" placeholder="e.g. Alice Nakamura, Acme Cooperative, Scheduling Bot" required>
+        </div>
+        <div class="form-group">
+          <label for="vta-kind">Subject Kind</label>
+          <select id="vta-kind">
+            <option value="human">👤 Human</option>
+            <option value="ai_agent">🤖 AI Agent (delegated)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="vta-passphrase">Encryption Passphrase (min 8 characters)</label>
+          <input type="password" id="vta-passphrase" placeholder="At least 8 characters" required minlength="8">
+          <div class="hint">Used to encrypt this VTA's private keys (Argon2id + AES-256-GCM). Write it down — there is no recovery if you lose it.</div>
+        </div>
+        <button type="submit" class="btn btn-primary" id="register-submit" style="width:100%;">Generate Identity →</button>
+        <p id="register-error" class="error-msg"></p>
+      </form>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-import" style="display:none;">
+    <div class="card">
+      <h2>Import a VTA from Seed Phrase</h2>
+      <p class="muted" style="margin-bottom:16px;">Claim a VTA that was created elsewhere (e.g. during utility-server setup) using its 24-word seed phrase. This reconstructs the same <code>did:scid:vh</code> identity.</p>
+      <form id="import-form">
+        <div class="form-group">
+          <label for="import-name">Display Name</label>
+          <input type="text" id="import-name" placeholder="e.g. Alice Nakamura" required>
+        </div>
+        <div class="form-group">
+          <label for="import-mnemonic">24-word seed phrase</label>
+          <textarea id="import-mnemonic" rows="3" placeholder="word1 word2 … word24" required style="width:100%; font-family:monospace;"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="import-passphrase">Encryption Passphrase (min 8 characters)</label>
+          <input type="password" id="import-passphrase" placeholder="At least 8 characters" required minlength="8">
+          <div class="hint">Encrypts this VTA's private keys on this device. It does not need to match the passphrase used elsewhere.</div>
+        </div>
+        <button type="submit" class="btn btn-primary" id="import-submit" style="width:100%;">Import VTA →</button>
+        <p id="import-error" class="error-msg"></p>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+var selectedAgentName = null;
+
+function apiGet(path) {
+  return fetch(path).then(function(r){ if(!r.ok) throw new Error(r.statusText); return r.json(); });
+}
+function apiPost(path, body) {
+  return fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) })
+    .then(function(r){ return r.json().then(function(d){ if(!r.ok) throw new Error(d?.error?.message || 'HTTP ' + r.status); return d; }); });
+}
+function initials(n) { return (n || '?').split(/\s+/).filter(Boolean).slice(0,2).map(function(w){return w[0].toUpperCase();}).join(''); }
+
+// ── Tabs ───────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(function(t) {
+    t.classList.toggle('active', t.getAttribute('data-tab') === tab);
+  });
+  document.getElementById('tab-login').style.display = tab === 'login' ? '' : 'none';
+  document.getElementById('tab-register').style.display = tab === 'register' ? '' : 'none';
+  document.getElementById('tab-import').style.display = tab === 'import' ? '' : 'none';
+}
+
+// ── Log in with VTA ────────────────────────────────────────────────────
+async function loadAgents() {
+  var el = document.getElementById('agent-list');
+  try {
+    var agents = await apiGet('/api/agents');
+    if (!agents || agents.length === 0) {
+      el.innerHTML = '<p class="muted">No VTAs found. Use the "Register a VTA" tab to create your first identity.</p>';
+      return;
+    }
+    el.innerHTML = agents.map(function(a) {
+      return '<div class="agent-list-item" onclick="selectAgent(\'' + a.name + '\', this)" data-name="' + a.name + '">' +
+        '<div class="icon">' + initials(a.name) + '</div>' +
+        '<div class="info"><div class="name">' + a.name + '</div>' +
+        '<div class="vid">' + (a.vid || '?').slice(0, 32) + '…</div></div>' +
+        '<div class="arrow">▶</div>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<p class="muted">Could not load VTAs: ' + e.message + '</p>';
+  }
+}
+
+function selectAgent(name, el) {
+  document.querySelectorAll('.agent-list-item').forEach(function(item) {
+    item.classList.remove('selected');
+    item.querySelector('.arrow').textContent = '▶';
+  });
+  el.classList.add('selected');
+  el.querySelector('.arrow').textContent = '▼';
+  selectedAgentName = name;
+  document.getElementById('selected-name').textContent = name;
+  document.getElementById('passphrase-section').classList.add('visible');
+  document.getElementById('passphrase-input').focus();
+  document.getElementById('activate-error').style.display = 'none';
+}
+
+async function activateAgent() {
+  if (!selectedAgentName) return;
+  var passphrase = document.getElementById('passphrase-input').value;
+  var errEl = document.getElementById('activate-error');
+  if (passphrase.length < 8) {
+    errEl.textContent = 'Passphrase must be at least 8 characters.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var btn = document.getElementById('activate-btn');
+  btn.disabled = true;
+  btn.textContent = 'Unlocking…';
+  errEl.style.display = 'none';
+  try {
+    await apiPost('/api/activate', { name: selectedAgentName, passphrase: passphrase });
+    btn.textContent = '✓ Activated!';
+    window.location.href = 'dashboard.html';
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = '🔓 Unlock VTA';
+  }
+}
+
+// ── Register a VTA ─────────────────────────────────────────────────────
+document.getElementById('vta-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  var errEl = document.getElementById('register-error');
+  var btn = document.getElementById('register-submit');
+  errEl.style.display = 'none';
+  var name = document.getElementById('vta-name').value.trim();
+  var subjectKind = document.getElementById('vta-kind').value;
+  var passphrase = document.getElementById('vta-passphrase').value;
+  if (!name || passphrase.length < 8) {
+    errEl.textContent = 'Passphrase must be at least 8 characters.';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Generating…';
+  try {
+    await apiPost('/api/agents', { name: name, subjectKind: subjectKind, passphrase: passphrase });
+    btn.textContent = 'Activating…';
+    try {
+      await apiPost('/api/activate', { name: name, passphrase: passphrase });
+      window.location.href = 'dashboard.html';
+    } catch (activateErr) {
+      errEl.textContent = 'VTA registered but activation failed: ' + activateErr.message + '. Go to the dashboard to activate.';
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Generate Identity →';
+    }
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Generate Identity →';
+  }
+});
+
+// ── Import a VTA from seed phrase ──────────────────────────────────────
+document.getElementById('import-form').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  var errEl = document.getElementById('import-error');
+  var btn = document.getElementById('import-submit');
+  errEl.style.display = 'none';
+  var name = document.getElementById('import-name').value.trim();
+  var mnemonic = document.getElementById('import-mnemonic').value.trim();
+  var passphrase = document.getElementById('import-passphrase').value;
+  if (!name || !mnemonic || passphrase.length < 8) {
+    errEl.textContent = 'Name, a 24-word seed phrase, and a passphrase (min 8 chars) are required.';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Importing…';
+  try {
+    await apiPost('/api/agents/import', { name: name, mnemonic: mnemonic, passphrase: passphrase });
+    btn.textContent = 'Activating…';
+    try {
+      await apiPost('/api/activate', { name: name, passphrase: passphrase });
+      window.location.href = 'dashboard.html';
+    } catch (activateErr) {
+      errEl.textContent = 'VTA imported but activation failed: ' + activateErr.message + '. Go to the dashboard to activate.';
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Import VTA →';
+    }
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Import VTA →';
+  }
+});
+
+// ── Init ───────────────────────────────────────────────────────────────
+loadAgents();
+document.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('passphrase-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') activateAgent();
+  });
+});
+</script>
+</body>
+</html>

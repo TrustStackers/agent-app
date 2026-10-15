@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en" data-page="communities">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Communities — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .community-card { background: #0a0e17; border: 1px solid #1e2535; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .community-card h3 { margin: 0 0 8px 0; }
+  .community-card .meta { font-size: 13px; color: #94a3b8; }
+  .badge-vtn { background: #1e3a5f; color: #93c5fd; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .badge-vtc { background: #1e3a5f; color: #60a5fa; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .badge-role { font-size: 11px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; }
+  .badge-admin { background: #3b2f1e; color: #fbbf24; }
+  .badge-member { background: #1e2e3b; color: #7dd3fc; }
+  .empty-state { text-align: center; padding: 40px; color: #64748b; }
+  .community-detail { font-size: 13px; }
+  .community-detail table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .community-detail th, .community-detail td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1e2535; }
+  .community-detail th { color: #94a3b8; font-weight: 500; }
+  /* Ceremony log: collapsible runs, numbered steps in record order. */
+  .ceremony-group { margin-bottom: 12px; }
+  .ceremony-group > summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+  .ceremony-group > summary .count { font-weight: 400; color: #64748b; font-size: 12px; }
+  .run { background: #0a0e17; border: 1px solid #1e2535; border-radius: 8px; margin-bottom: 8px; }
+  .run > summary { cursor: pointer; padding: 8px 12px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .run > summary .run-time { color: #94a3b8; font-size: 12px; }
+  .run-body { padding: 0 12px 12px; }
+  .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+  .steps > li { position: relative; padding: 6px 0 6px 34px; border-top: 1px solid #1a1f2e; font-size: 13px; }
+  .steps > li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 0; top: 8px; width: 22px; height: 22px; border-radius: 50%;
+    background: #12203a; color: #60a5fa; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps .step-meta { color: #64748b; font-size: 11px; }
+  .steps .tech > summary { cursor: pointer; color: #64748b; font-size: 11px; }
+  .steps pre { background: #0f1524; border: 1px solid #1e2535; border-radius: 4px; padding: 8px; overflow-x: auto; font-size: 11px; }
+  .badge-status { font-size: 10px; padding: 1px 6px; border-radius: 3px; margin-left: 4px; }
+  .badge-ok { background: #064e3b; color: #34d399; }
+  .badge-deny { background: #7f1d1d; color: #fca5a5; }
+  .badge-wait { background: #78350f; color: #fbbf24; }
+</style>
+</head>
+<body data-page="communities">
+<header class="header">
+  <h1>My Trust Agent</h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div id="status-area"></div>
+  <h2>Communities</h2>
+  <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+    <p class="muted" style="margin:0;">VTCs and VTNs known to this agent, received from utility servers.</p>
+    <a href="vtc-create.html" class="copy-btn" style="margin-left:auto;">+ Create Community</a>
+  </div>
+  <div id="community-list">Loading...</div>
+
+  <h2 style="margin-top:28px;">Ceremony log</h2>
+  <p class="muted" style="margin:0 0 12px 0;">What this network's ceremonies actually did, step by step — newest first.
+    Every ceremony records each step as a trust task, so this is the record of what ran and what it decided.</p>
+  <div id="ceremony-log">Loading…</div>
+</div>
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+async function loadCommunities() {
+  var el = document.getElementById('community-list');
+  try {
+    var r = await fetch('/api/communities');
+    if (!r.ok) throw new Error('API error: ' + r.status);
+    var list = await r.json();
+
+    if (!list || list.length === 0) {
+      el.innerHTML = '<div class="empty-state"><p>No communities yet.</p><p class="muted">VTCs/VTNs created on connected utility servers will appear here.</p></div>';
+      return;
+    }
+
+    el.innerHTML = list.map(function(c) {
+      var isVtn = c.role === 'vtn';
+      var badge = '<span class="' + (isVtn ? 'badge-vtn' : 'badge-vtc') + '">' + c.role.toUpperCase() + '</span>';
+      var did = c.did || '';
+      // Use the short UUIDv5 identity key for URLs — the real did:peer:4 DID is
+      // far too long to put in a URL path/query (triggers HTTP 414).
+      var cid = c.uuid || c.did || '';
+      var shortId = cid.slice(0, 8).replace(/[^a-zA-Z0-9]/g, '');
+      // The founding admins ARE the community's admins — there is no second class.
+      // `adminThresholdN` is the ADMIN COUNT (the same number you set as "Number of
+      // Founding Admins"). `adminThresholdM` is a different thing entirely: the
+      // signature quorum for changing governance, shown on the Rules page — never
+      // rendered as a class of admin on this summary.
+      var canInvite = c.myRole === 'founding_admin' || c.myRole === 'admin';
+      var inviteBlock = canInvite
+        ? '<button class="btn-sm" onclick="showInviteForm(\'' + escapeHtml(cid) + '\', \'' + shortId + '\')" style="margin-top:8px; margin-left:6px;">Invite Member</button>' +
+          '<div id="invite-' + shortId + '" style="display:none; margin-top:10px; padding:10px; background:#0a0e17; border:1px solid #1e2535; border-radius:6px;">' +
+          '<label style="font-size:12px; color:#94a3b8;">Agent name</label>' +
+          '<input type="text" id="invite-name-' + shortId + '" placeholder="vta:namespace:name" style="width:100%; background:#121826; border:1px solid #1e2535; color:#e0e6ed; padding:6px; border-radius:4px; margin-bottom:6px;">' +
+          '<label style="font-size:12px; color:#94a3b8;">…or DID (optional)</label>' +
+          '<input type="text" id="invite-did-' + shortId + '" placeholder="did:scid:vh:..." style="width:100%; background:#121826; border:1px solid #1e2535; color:#e0e6ed; padding:6px; border-radius:4px; margin-bottom:6px;">' +
+          '<div><button class="btn-sm" onclick="submitInvite(\'' + escapeHtml(cid) + '\', \'' + shortId + '\')">Send Invitation</button> <span id="invite-msg-' + shortId + '" style="font-size:12px; margin-left:8px;"></span></div>' +
+          '</div>'
+        : '';
+      return '<div class="community-card" id="card-' + shortId + '">' +
+        '<h3>' + escapeHtml(c.name || '(unnamed)') + ' ' + badge + '</h3>' +
+        '<div class="meta">' +
+        'Admins: ' + (c.adminThresholdN || '?') +
+        (did ? ' &middot; DID: <code>' + escapeHtml(did.slice(0, 28)) + '</code>' : '') +
+        '</div>' +
+        '<button class="btn-sm" onclick="toggleDetail(this, \'' + escapeHtml(cid) + '\', \'' + shortId + '\')" style="margin-top:8px;">View Details</button>' +
+        inviteBlock +
+        '<div id="detail-' + shortId + '" class="community-detail" style="display:none; margin-top:12px; border-top:1px solid #1e2535; padding-top:12px;">Loading...</div>' +
+        '</div>';
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<div class="empty-state"><p style="color:#f87171;">Failed to load: ' + escapeHtml(e.message) + '</p></div>';
+  }
+}
+
+function escapeHtml(s) {
+  var d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+async function toggleDetail(btn, did, shortId) {
+  var detailEl = document.getElementById('detail-' + shortId);
+  if (!detailEl) return;
+
+  if (detailEl.style.display === 'block') {
+    detailEl.style.display = 'none';
+    btn.textContent = 'View Details';
+    return;
+  }
+
+  // Show loading
+  detailEl.style.display = 'block';
+  detailEl.innerHTML = 'Loading...';
+  btn.textContent = 'Hide Details';
+
+  // Always re-fetch: the member roster can change when someone accepts an
+  // invitation on another device, so a cached detail view would go stale.
+  try {
+    var r = await fetch('/api/community-detail?did=' + encodeURIComponent(did));
+    if (!r.ok) throw new Error('Failed to load detail: ' + r.status);
+    var data = await r.json();
+    renderDetail(detailEl, data);
+  } catch (e) {
+    detailEl.innerHTML = '<p style="color:#f87171;">Failed to load: ' + escapeHtml(e.message) + '</p>';
+  }
+}
+
+function renderDetail(el, data) {
+  var gov = data.governance || {};
+  var members = data.members || [];
+  var activeMembers = members.filter(function(m) { return m.status === 'active'; });
+  var pendingMembers = members.filter(function(m) { return m.status === 'pending'; });
+
+  var roleBadge = function(role) {
+    // An admin is an admin. `founding_admin` records PROVENANCE (was there at
+    // creation), NOT a rank: both roles carry identical powers (see `canInvite`
+    // above; governance-guard treats 'admin' and 'founding_admin' alike).
+    if (role === 'founding_admin') {
+      return '<span class="badge-role badge-admin">admin</span> <span class="muted" style="font-size:10px;">founding</span>';
+    }
+    if (role === 'admin') return '<span class="badge-role badge-admin">admin</span>';
+    return '<span class="badge-role badge-member">member</span>';
+  };
+
+  var html = '<div><strong>DID:</strong> <code>' + escapeHtml(data.did) + '</code></div>' +
+    '<div style="margin-top:4px;"><strong>Governance:</strong> ' +
+    'Admins: ' + (gov.adminThresholdN || '?') +
+    (gov.parentCommunityId ? ' &middot; Parent VTN: ' + gov.parentCommunityId : '') +
+    '</div>';
+
+  if (gov.allowedClaimTypes && gov.allowedClaimTypes.length) {
+    html += '<div style="margin-top:4px;"><strong>Allowed Credential Types:</strong> ' +
+      gov.allowedClaimTypes.map(escapeHtml).join(', ') + '</div>';
+  }
+
+  if (activeMembers.length > 0) {
+    html += '<div style="margin-top:8px;"><strong>Members (' + activeMembers.length + ' active):</strong></div>';
+    html += '<table><tr><th>Name</th><th>Role</th><th>Personhood</th></tr>';
+    activeMembers.forEach(function(m) {
+      html += '<tr><td>' + escapeHtml(m.name) + '</td><td>' + roleBadge(m.role) + '</td><td>' +
+        (m.personhoodAsserted ? '✓' : '—') + '</td></tr>';
+    });
+    html += '</table>';
+  }
+
+  if (pendingMembers.length > 0) {
+    html += '<div style="margin-top:8px; color:#94a3b8;"><strong>Pending (' + pendingMembers.length + '):</strong> ' +
+      pendingMembers.map(function(m) { return escapeHtml(m.name); }).join(', ') + '</div>';
+  }
+
+  if (activeMembers.length === 0 && pendingMembers.length === 0) {
+    html += '<div style="margin-top:8px; color:#64748b;">No members yet.</div>';
+  }
+
+  el.innerHTML = html;
+}
+
+function showInviteForm(did, shortId) {
+  var el = document.getElementById('invite-' + shortId);
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function submitInvite(did, shortId) {
+  var name = document.getElementById('invite-name-' + shortId).value.trim();
+  var subjectDid = document.getElementById('invite-did-' + shortId).value.trim();
+  var msgEl = document.getElementById('invite-msg-' + shortId);
+  if (!name && !subjectDid) {
+    msgEl.textContent = 'Enter an agent name or a DID.';
+    msgEl.style.color = '#f87171';
+    return;
+  }
+  msgEl.textContent = 'Sending…';
+  msgEl.style.color = '#94a3b8';
+  try {
+    var r = await fetch('/api/communities/' + encodeURIComponent(did) + '/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(name ? { subjectName: name } : { subjectDid: subjectDid }),
+    });
+    var data = await r.json();
+    if (!r.ok) throw new Error(data.error && data.error.message ? data.error.message : 'HTTP ' + r.status);
+    msgEl.textContent = '✓ Invitation issued' + (data.signed ? ' (signed VIC)' : '') + '.';
+    msgEl.style.color = '#34d399';
+    document.getElementById('invite-name-' + shortId).value = '';
+    document.getElementById('invite-did-' + shortId).value = '';
+  } catch (e) {
+    msgEl.textContent = e.message;
+    msgEl.style.color = '#f87171';
+  }
+}
+
+// ── Ceremony log ───────────────────────────────────────────────────────────
+// Every ceremony the utility server ran, as a collapsible list of steps IN THE ORDER
+// THEY HAPPENED. The ceremonies run on the server (which writes the trust tasks), so
+// this is read over TSP; the wording lives here, so a step reads as a sentence rather
+// than as a task type. The raw type and payload stay behind "technical detail".
+
+// NOTE: there is deliberately NO label vocabulary here. Every ceremony title, ceremony
+// description, step label and step sentence comes from the DATABASE — the API returns
+// `ceremonyLabel` / `ceremonyDescription` and each step's `display` straight from the
+// catalog rows (`ceremony_templates.template`, `trust_task_templates.template`). So a
+// developer adding a ceremony writes its wording in the catalog and needs no change here.
+
+/** The ceremony's own title, from its catalog row; falls back to its name. */
+function ceremonyTitle(group) {
+  return group.label || group.name || 'Other trust tasks';
+}
+
+/** 'task:p2pts:credential:onboarding-vmc:0.1' → 'Credential · onboarding vmc'. */
+function humanType(type) {
+  var parts = String(type || '').split(':');
+  if (parts.length < 5) return String(type || '');
+  var family = parts[2];
+  return family.charAt(0).toUpperCase() + family.slice(1) + ' · ' + parts.slice(3, -1).join(':').replace(/-/g, ' ');
+}
+
+/** Fill `{key}` placeholders from a step's facts; an unknown key reads as an em dash. */
+function fillWords(text, facts) {
+  return String(text).replace(/\{(\w+)\}/g, function (_, key) {
+    var value = facts[key];
+    return (value === undefined || value === null) ? '—' : String(value);
+  });
+}
+
+/** The payload, with an effect step's `{ result: … }` unwrapped over the top. */
+function stepFacts(step) {
+  var payload = (step.payload && typeof step.payload === 'object') ? step.payload : {};
+  var result = (payload.result && typeof payload.result === 'object') ? payload.result : {};
+  var facts = Object.assign({}, payload, result);
+  if (Array.isArray(payload.adminUuids)) facts.adminCount = payload.adminUuids.length;
+  return facts;
+}
+
+/**
+ * One plain-language line for a step, from the step's OWN catalog wording (returned as
+ * `display`). A type with no catalog row falls back to a decorated form of its identifier
+ * rather than showing nothing.
+ */
+function describeStep(step) {
+  var wording = step.display || {};
+  var facts = stepFacts(step);
+  var label = wording.label || humanType(step.type);
+  var sentence = wording[step.direction]
+    ? fillWords(wording[step.direction], facts)
+    : (step.direction === 'request' ? 'Requested: ' : 'Completed: ') + humanType(step.type).toLowerCase() + '.';
+  // A refusal is the interesting case — never hide why.
+  if (step.status === 'denied') sentence += facts.reason ? ' Refused: ' + facts.reason : ' Refused.';
+  return { label: label, sentence: sentence };
+}
+
+function statusChip(status) {
+  var cls = 'badge-status';
+  if (status === 'allowed' || status === 'completed') cls += ' badge-ok';
+  else if (status === 'denied' || status === 'failed') cls += ' badge-deny';
+  else if (status === 'pending') cls += ' badge-wait';
+  return '<span class="' + cls + '">' + escapeHtml(status || 'recorded') + '</span>';
+}
+
+function fmtWhen(seconds) {
+  if (!seconds) return '';
+  var d = new Date(seconds * 1000);
+  return isNaN(d.getTime()) ? '' : d.toLocaleString();
+}
+
+// Runs whose steps have already been fetched (kept so a re-expand is instant).
+var loadedLogRuns = {};
+// ── Live refresh ────────────────────────────────────────────────────────────
+// Ceremonies complete through actions taken on OTHER agents, so the log has to keep up on its
+// own: watching a founding ceremony and having to hit Refresh to see the last step land is how
+// "is it stuck?" ends up being asked. The server now NUDGES (`ceremony-step`) when a co-signature
+// lands, so the log repaints on that instead of on a timer; it repaints only when something
+// actually changed, and re-opens whatever the operator had expanded — a repaint must not collapse
+// their view (and must not strand a run on "Loading steps…" forever).
+var logBusy = false;
+var lastLogSnapshot = null;
+
+function openLogRunIds() {
+  var el = document.getElementById('ceremony-log');
+  if (!el || !el.querySelectorAll) return [];
+  return Array.prototype.map.call(el.querySelectorAll('details.run[open]'), function (d) {
+    return d.getAttribute('data-thread');
+  });
+}
+
+function reopenLogRun(threadId) {
+  var el = document.getElementById('ceremony-log');
+  if (!el || !el.querySelector) return;
+  var runEl = el.querySelector('details.run[data-thread="' + threadId + '"]');
+  if (!runEl) return;
+  // The steps were rendered into the DOM we just discarded, so let them be fetched again.
+  delete loadedLogRuns[threadId];
+  runEl.open = true;   // re-expanding fires `toggle`, and the listener reloads the steps
+}
+
+function renderCeremonyLog(threads) {
+  var el = document.getElementById('ceremony-log');
+  if (!threads.length) {
+    el.innerHTML = '<p class="muted">No ceremonies yet. Create a community or invite someone, ' +
+      'and the steps each ceremony runs will appear here.</p>';
+    return;
+  }
+
+  // Group by ceremony, keeping the API's newest-first order for both. The heading and
+  // the one-line description come from the ceremony's catalog row (via its runs).
+  var groups = [];
+  var byName = {};
+  threads.forEach(function (thread) {
+    var key = thread.ceremony || '';
+    if (!byName[key]) {
+      byName[key] = {
+        name: key,
+        label: thread.ceremonyLabel,
+        description: thread.ceremonyDescription,
+        runs: [],
+      };
+      groups.push(byName[key]);
+    }
+    byName[key].runs.push(thread);
+  });
+
+  el.innerHTML = groups.map(function (group) {
+    var runsHtml = group.runs.map(function (run) {
+      var badges = (run.statuses || []).map(statusChip).join(' ');
+      return '<details class="run" data-thread="' + escapeHtml(run.threadId) + '">' +
+        '<summary>' +
+        '<span class="muted" style="font-size:11px;">' + escapeHtml(String(run.threadId).slice(0, 8)) + '</span>' +
+        '<strong style="font-size:13px;">' + escapeHtml(fmtWhen(run.lastAt)) + '</strong>' +
+        '<span class="run-time">' + run.documentCount + ' document(s)</span>' +
+        badges +
+        '</summary>' +
+        '<div class="run-body"><p class="muted">Loading steps…</p></div>' +
+        '</details>';
+    }).join('');
+
+    return '<details class="ceremony-group" open>' +
+      '<summary>' + escapeHtml(ceremonyTitle(group)) +
+      ' <span class="count">(' + group.runs.length + ' run(s))</span></summary>' +
+      (group.description
+        ? '<p class="muted" style="font-size:12px; margin:0 0 8px 0;">' + escapeHtml(group.description) + '</p>'
+        : '') +
+      runsHtml + '</details>';
+  }).join('');
+
+  // Fetch a run's steps the first time it is expanded.
+  Array.prototype.forEach.call(el.querySelectorAll('details.run'), function (runEl) {
+    runEl.addEventListener('toggle', function () {
+      if (!runEl.open) return;
+      var threadId = runEl.getAttribute('data-thread');
+      if (loadedLogRuns[threadId]) return;
+      loadedLogRuns[threadId] = true;
+      loadRunSteps(runEl, threadId);
+    });
+  });
+}
+
+async function loadRunSteps(runEl, threadId) {
+  var body = runEl.querySelector('.run-body');
+  try {
+    var r = await fetch('/api/ceremony-log/' + encodeURIComponent(threadId));
+    var data = await r.json();
+    if (!r.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + r.status));
+    var steps = data.steps || [];
+    if (!steps.length) {
+      body.innerHTML = '<p class="muted">No steps recorded for this ceremony.</p>';
+      return;
+    }
+    body.innerHTML = '<ol class="steps">' + steps.map(function (step) {
+      var described = describeStep(step);
+      var arrow = step.direction === 'request' ? '→' : '←';
+      var who = step.issuerDid || step.recipientDid || '';
+      if (String(who).length > 28) who = String(who).slice(0, 28) + '…';
+      return '<li>' +
+        '<div><strong>' + escapeHtml(described.label) + '</strong> ' + statusChip(step.status) + '</div>' +
+        '<div>' + escapeHtml(described.sentence) + '</div>' +
+        '<div class="step-meta">' + arrow + ' ' + escapeHtml(step.direction) +
+        (who ? ' · ' + escapeHtml(who) : '') +
+        (step.createdAt ? ' · ' + escapeHtml(fmtWhen(step.createdAt)) : '') + '</div>' +
+        '<details class="tech"><summary>technical detail</summary>' +
+        '<div style="margin-top:4px;"><code>' + escapeHtml(step.type) + '</code></div>' +
+        '<pre>' + escapeHtml(JSON.stringify(step.payload, null, 2)) + '</pre>' +
+        '</details>' +
+        '</li>';
+    }).join('') + '</ol>';
+  } catch (err) {
+    body.innerHTML = '<p style="color:#f87171;">Could not load this ceremony: ' + escapeHtml(err.message) + '</p>';
+  }
+}
+
+async function loadCeremonyLog() {
+  var el = document.getElementById('ceremony-log');
+  try {
+    var r = await fetch('/api/ceremony-log');
+    var data = await r.json();
+    if (!r.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + r.status));
+    var threads = data.threads || [];
+    // Repaint only when the log actually moved, so a poll cannot fight the operator.
+    var snap = JSON.stringify(threads);
+    if (snap === lastLogSnapshot) return;
+    var openRuns = openLogRunIds();   // captured BEFORE the repaint
+    lastLogSnapshot = snap;
+    renderCeremonyLog(threads);
+    openRuns.forEach(reopenLogRun);
+  } catch (err) {
+    // Never wipe a good view because one poll failed (server restarting, VTA busy).
+    if (lastLogSnapshot !== null) return;
+    el.innerHTML = '<p class="muted">Could not load the ceremony log: ' + escapeHtml(err.message) + '</p>';
+  }
+}
+
+loadCommunities();
+
+// Both things on this page are now driven by pushes.
+//
+//   - The community LIST and its detail by `community-changed` (a membership push means the list changed; a
+//     governance push means a community's rules changed). The list was previously loaded ONCE and never
+//     refreshed — deliberately, because repainting it closes a detail panel mid-read — so this is new
+//     information reaching the page rather than a poll being replaced.
+//
+//   - The CEREMONY LOG by `ceremony-step`, which is the server's ceremony-progress nudge. It exists because the
+//     community does not exist until the ceremony CRYSTALLIZES, so `community-changed` cannot carry progress
+//     before that: a co-admin's co-signature had no signal at all, and this page polled every 4 s to see one.
+async function refreshCommunities() {
+  if (logBusy) return;
+  logBusy = true;
+  try { await loadCeremonyLog(); }
+  catch (e) { /* transient: the last good view stays up and the next event retries */ }
+  finally { logBusy = false; }
+}
+
+// React to a community arriving or its governance changing.
+//
+// Deliberately SKIPPED while a detail panel is expanded: `loadCommunities` rebuilds the list, which would
+// collapse the panel the operator is reading — the exact reason the list was never polled. A closed list picks
+// the change up on the next event or the next page load, so nothing is lost, only deferred.
+function anyDetailOpen() {
+  var panels = document.querySelectorAll('.community-detail');
+  for (var i = 0; i < panels.length; i++) {
+    if (panels[i].style.display !== 'none') return true;
+  }
+  return false;
+}
+
+if (window.AgentStack) {
+  AgentStack.on('community-changed', function () {
+    if (anyDetailOpen()) return;
+    loadCommunities();
+  });
+
+  // A founding ceremony advanced. This replaced the poll: the page no longer asks on a timer, it is TOLD.
+  AgentStack.on('ceremony-step', refreshCommunities);
+}
+
+refreshCommunities();
+document.addEventListener('visibilitychange', function () { if (!document.hidden) refreshCommunities(); });
+</script>
+</body>
+</html>

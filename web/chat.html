@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en" data-page="chat">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat — My Trust Agent</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .chat-container { max-width: 700px; margin: 0 auto; }
+  .chat-messages { background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; padding: 12px; height: 400px; overflow-y: auto; margin-bottom: 12px; }
+  .chat-msg { margin-bottom: 8px; padding: 8px 10px; border-radius: 6px; font-size: 13px; max-width: 80%; position: relative; }
+  .chat-msg.me { background: #1e3a5f; margin-left: auto; color: #93c5fd; text-align: right; }
+  .chat-msg.peer { background: #1e2535; margin-right: auto; color: #cbd5e1; }
+  .chat-msg.system { background: #1a1f2e; margin: 0 auto; color: #64748b; text-align: center; max-width: 90%; }
+  .chat-msg.error { background: #3b1010; margin: 0 auto; color: #fca5a5; text-align: center; max-width: 90%; }
+  .chat-msg.locked { background: #3b1f4a; border: 1px solid #7c3aed; }
+  .chat-msg .meta { font-size: 10px; color: #64748b; margin-bottom: 2px; }
+  .chat-msg .status { font-size: 10px; margin-top: 2px; opacity: 0.7; }
+  .chat-msg.me .status { color: #60a5fa; }
+  .chat-msg .status.delivered { color: #34d399; }
+  .chat-msg .status.failed { color: #f87171; }
+  .input-row { display: flex; gap: 8px; align-items: center; }
+  .input-row input { flex: 1; padding: 10px 14px; background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; color: #e0e6ed; font-size: 13px; }
+  .input-row input:focus { outline: none; border-color: #2563eb; }
+  .toggle-btn { padding: 8px 14px; border: 1px solid #334155; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; font-size: 12px; white-space: nowrap; }
+  .toggle-btn.secure { border-color: #7c3aed; color: #a78bfa; background: #2e1a4a; }
+  .select-peer { margin-bottom: 16px; }
+  .select-peer select { padding: 8px 12px; background: #0a0e17; border: 1px solid #1e2535; border-radius: 6px; color: #e0e6ed; font-size: 13px; width: 100%; }
+  .conn-status { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; margin-left: 8px; padding: 2px 8px; border-radius: 10px; }
+  .conn-status.online { background: #064e3b; color: #34d399; }
+  .conn-status.offline { background: #4a1a1a; color: #f87171; }
+  .conn-status.checking { background: #1e3a5f; color: #60a5fa; }
+  .conn-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .conn-status.online .conn-dot { background: #34d399; }
+  .conn-status.offline .conn-dot { background: #f87171; }
+  .conn-status.checking .conn-dot { background: #60a5fa; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .notif-badge { background: #ef4444; color: white; border-radius: 10px; padding: 1px 6px; font-size: 10px; position: relative; top: -8px; display: none; }
+  .notif-badge.show { display: inline; }
+  .vrc-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; white-space: nowrap; }
+  .vrc-verified { background: #065f46; color: #34d399; }
+  .vrc-unverified { color: #64748b; }
+</style>
+</head>
+<body>
+<header class="header">
+  <h1>My Trust Agent <span class="notif-badge" id="notif-badge" title="New messages" style="display:none;">●</span></h1>
+  <nav id="main-nav"></nav>
+</header>
+<div class="container">
+  <div class="chat-container">
+    <div class="card select-peer">
+      <h2>Select Peer</h2>
+      <select id="peer-select" onchange="selectPeer(this.value)">
+        <option value="">-- Choose a connected peer --</option>
+      </select>
+       <p class="muted" style="margin-top:4px;" id="no-peers-hint">Only established (bidirectional) relationships shown. <a href="dashboard.html">Connect to a peer first →</a></p>
+    </div>
+
+    <div class="card" id="chat-box" style="display:none;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+        <h2 style="margin:0;">Chat with <span id="chat-peer-name" style="font-size:14px;"></span></h2>
+        <span class="conn-status checking" id="conn-status"><span class="conn-dot"></span> checking…</span>
+        <span id="dtg-vrc-badge" class="vrc-badge vrc-unverified" style="display:none;" title="DTG VRC status">🔓</span>
+        <button class="toggle-btn" id="secure-toggle" onclick="toggleSecure()">🔓 Plain</button>
+        <button class="toggle-btn" id="clear-history-btn" onclick="clearHistory()" title="Clear this peer's chat history (held in memory only — this cannot be undone)">🗑 Clear History</button>
+      </div>
+      <div class="muted" id="chat-peer-did" style="font-family:monospace; font-size:10px; margin-bottom:12px;"></div>
+      <div class="chat-messages" id="messages">
+        <p class="muted" style="text-align:center; padding-top:40px;">Waiting for messages…</p>
+      </div>
+      <div class="input-row">
+        <input id="msg-input" placeholder="Type a message…" onkeydown="if(event.key==='Enter') sendMessage()" disabled>
+        <button class="btn btn-primary" id="send-btn" onclick="sendMessage()" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/stack-client.js"></script>
+<script src="assets/nav.js"></script>
+<script>
+var selectedPeer = null;
+var secureMode = false;
+var messageIds = new Set();
+var pageSubscriptions = [];
+var unreadCount = 0;
+var peerSelectInitialized = false;
+var loadPeersErrorCount = 0;
+var lastChatReadySnapshot = '';
+// Peer DID -> agent login name, refreshed by loadPeers() from
+// GET /api/relationships (remoteName). Null when the peer has no registered name.
+var peerNames = {};
+// The signed-in agent's own login name, used to label local entries.
+var localAgentName = null;
+// Guards the async transcript render: bumped whenever a newer render starts, so
+// a slow response for a peer the user has already switched away from is dropped.
+var chatLogRenderToken = 0;
+
+/**
+ * Legacy short-DID label, used whenever a peer's login name is unknown.
+ */
+function shortDid(vid) {
+  return vid ? vid.slice(0, 32) + '…' : '';
+}
+
+/**
+ * Dropdown option text for a peer: the agent login name when we have it,
+ * otherwise the abbreviated DID (unchanged fallback behaviour).
+ */
+function peerOptionLabel(rel) {
+  var name = rel.remoteName && String(rel.remoteName).trim();
+  return name ? name : (rel.remoteDid ? rel.remoteDid.slice(0, 40) + '…' : '(unknown peer)');
+}
+
+function apiGet(path) { return fetch(path).then(function(r){ if(!r.ok) throw new Error(r.statusText); return r.json(); }); }
+function apiPost(path, body) { return fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) }).then(function(r){ return r.json().then(function(d){ if(!r.ok) throw new Error(d.error?.message||'HTTP '+r.status); return d; }); }); }
+
+// ── Notification badge ─────────────────────────────────────────────────
+
+function showNotification() {
+  unreadCount++;
+  var badge = document.getElementById('notif-badge');
+  if (!badge) return;
+  badge.textContent = unreadCount;
+  badge.classList.add('show');
+  // Flash title
+  if (document.hidden) {
+    document.title = '(' + unreadCount + ') Chat — My Trust Agent';
+  }
+}
+
+function clearNotification() {
+  unreadCount = 0;
+  var badge = document.getElementById('notif-badge');
+  if (!badge) return;
+  badge.classList.remove('show');
+  document.title = 'Chat — My Trust Agent';
+}
+
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden) clearNotification();
+});
+
+// ── Connection status ──────────────────────────────────────────────────
+
+var connCheckAttempts = 0;
+
+async function checkConnection(peerId) {
+  var statusEl = document.getElementById('conn-status');
+  connCheckAttempts++;
+
+  // First attempt: show "Connecting…" with a grace period.
+  // Subsequent (polled) checks show the actual status immediately.
+  if (connCheckAttempts <= 1) {
+    statusEl.className = 'conn-status checking';
+    statusEl.innerHTML = '<span class="conn-dot"></span> Connecting…';
+  }
+
+  try {
+    var debug = await apiGet('/api/relationships/' + encodeURIComponent(peerId) + '/debug');
+    console.log('[chat] checkConnection: libp2pConnected=' + debug.libp2pConnected + ' attempt=' + connCheckAttempts);
+
+    if (debug.libp2pConnected) {
+      statusEl.className = 'conn-status online';
+      statusEl.innerHTML = '<span class="conn-dot"></span> Connected';
+    } else if (connCheckAttempts <= 1) {
+      // Still checking — keep the pulse animation and "Connecting…" text
+      statusEl.className = 'conn-status checking';
+      statusEl.innerHTML = '<span class="conn-dot"></span> Connecting (relay may take a moment)…';
+    } else {
+      // No direct libp2p connection — check if relay is available.
+      // Messages can still work via circuit relay even without a direct conn.
+      var hasRelay = false;
+      try {
+        var bsStatus = await apiGet('/api/bootstrap/status');
+        hasRelay = !!(bsStatus.relayAddr);
+      } catch(_) { /* ignore */ }
+      if (hasRelay) {
+        statusEl.className = 'conn-status checking';
+        statusEl.innerHTML = '<span class="conn-dot"></span> Relay available (dial on send)';
+      } else {
+        statusEl.className = 'conn-status offline';
+        statusEl.innerHTML = '<span class="conn-dot"></span> No connection';
+      }
+    }
+  } catch(e) {
+    console.warn('[chat] checkConnection error:', e);
+    statusEl.className = 'conn-status checking';
+    statusEl.innerHTML = '<span class="conn-dot"></span> Checking…';
+  }
+
+  // Always enable inputs — the user can still try to send and the retry
+  // logic in the backend will handle reconnection.
+  document.getElementById('msg-input').disabled = false;
+  document.getElementById('send-btn').disabled = false;
+}
+
+function startConnectionCheck() {
+  if (!selectedPeer) return;
+  // One initial read. The 10 s interval is gone: `relationship-changed` re-checks the status the moment the
+  // agent's view of the peer changes (see the subscription in `startEventSource`), which is the only way this
+  // status can move.
+  checkConnection(selectedPeer);
+}
+
+function stopConnectionCheck() {
+  // No timer to clear — the status is pushed, not polled.
+}
+
+// ── Load established peers ───────────────────────────────────────────────
+
+async function loadPeers() {
+  var currentSelection = selectedPeer; // save before DOM rebuild
+  try {
+    var rels = await apiGet('/api/relationships');
+    loadPeersErrorCount = 0; // reset on success
+    
+    // Diagnostic: log every relationship with full state
+    console.log('[chat] loadPeers: ' + rels.length + ' total relationships received');
+    rels.forEach(function(r) {
+      console.log('[chat] loadPeers:   ' + r.remoteDid.slice(0,12) + '... name="' + (r.remoteName || '') + '" dir=' + r.direction + ' status=' + r.status + ' hasTransport=' + !!(r.remoteTransport) + ' peerId=' + (r.remoteTransport?.peerId?.slice(0,12) ?? 'none'));
+    });
+    
+    var chatReady = rels.filter(function(r){ return r.direction === 'bidirectional' && r.status === 'established'; });
+    var establishedNonBidir = rels.filter(function(r){ return r.status === 'established' && r.direction !== 'bidirectional'; });
+    
+    if (establishedNonBidir.length > 0) {
+      console.warn('[chat] loadPeers: ⚠ ' + establishedNonBidir.length + ' relationship(s) have status=established but direction≠bidirectional — will NOT appear in dropdown!');
+      establishedNonBidir.forEach(function(r) {
+        console.warn('[chat] loadPeers:   ⚠ ' + r.remoteDid.slice(0,12) + '... dir=' + r.direction + ' status=' + r.status);
+      });
+    }
+    
+    var chatReadySnapshot = JSON.stringify(chatReady.map(function(r){ return r.remoteDid; }));
+    console.log('[chat] loadPeers: ' + chatReady.length + ' chat-ready (bidirectional+established), ' + (rels.length - chatReady.length) + ' not chat-ready, currentSelection=' + (currentSelection ? currentSelection.slice(0,12) : 'none') + ', initialized=' + peerSelectInitialized);
+
+    // Remember each peer's agent login name so the header and the message labels
+    // can use it without another lookup. The DID stays the option VALUE — it is
+    // the key every chat API takes — and is only the label when no name is known.
+    peerNames = {};
+    rels.forEach(function(r) {
+      if (r.remoteDid) peerNames[r.remoteDid] = (r.remoteName && String(r.remoteName).trim()) || null;
+    });
+
+    var sel = document.getElementById('peer-select');
+    var noPeersHint = document.getElementById('no-peers-hint');
+
+    // Build dropdown options — identify each peer by their agent login name,
+    // with the full DID on hover (title) and as the fallback label.
+    var optionsHtml = '<option value="">-- Choose a connected peer --</option>' +
+      chatReady.map(function(r){
+        return '<option value="' + escapeHtml(r.remoteDid) + '" title="' + escapeHtml(r.remoteDid) + '">' +
+          escapeHtml(peerOptionLabel(r)) + '</option>';
+      }).join('');
+    sel.innerHTML = optionsHtml;
+
+    // Conditionally show/hide the "Connect to a peer first" hint
+    if (noPeersHint) {
+      noPeersHint.style.display = chatReady.length > 0 ? 'none' : '';
+    }
+
+    // ── Auto-select on first successful load only ──────────────────────
+    if (!peerSelectInitialized && chatReady.length > 0) {
+      var params = new URLSearchParams(window.location.search);
+      var peerParam = params.get('peer');
+      var peerToSelect = null;
+
+      // Prefer URL param, then first available peer
+      if (peerParam && chatReady.some(function(r){ return r.remoteDid === peerParam; })) {
+        peerToSelect = peerParam;
+        console.log('[chat] loadPeers: auto-select from URL param ' + peerParam.slice(0,12) + '...');
+      } else {
+        // `remoteDid` is the relationship's peer key — `remoteVid` does not exist
+        // on the record, and reading it left the chat box closed on first load.
+        peerToSelect = chatReady[0].remoteDid;
+        console.log('[chat] loadPeers: auto-select first peer ' + peerToSelect.slice(0,12) + '...');
+      }
+
+      sel.value = peerToSelect;
+      try {
+        selectPeer(peerToSelect);
+        // Only mark initialized AFTER selectPeer succeeds — prevents
+        // permanent lockout if selectPeer crashes (e.g., null DOM element).
+        peerSelectInitialized = true;
+      } catch (selectErr) {
+        console.error('[chat] loadPeers: selectPeer crashed:', selectErr);
+        // Leave peerSelectInitialized = false so the next poll can retry
+      }
+      lastChatReadySnapshot = chatReadySnapshot;
+      return;
+    }
+
+    // ── After initial selection, only reconcile the dropdown ───────────
+    // Don't programmatically call selectPeer() after initialization —
+    // let the user's manual choice persist. Only close chat if the
+    // selected peer completely disappears from the list.
+
+    // If the user's selected peer is no longer in chatReady, clear the chat
+    if (currentSelection && !chatReady.some(function(r){ return r.remoteDid === currentSelection; })) {
+      console.warn('[chat] loadPeers: selected peer ' + currentSelection.slice(0,12) + '... no longer available — closing chat');
+      selectPeer('');
+      sel.value = '';
+    }
+
+    // Keep the dropdown in sync with the current selection (if still present)
+    if (currentSelection && chatReady.some(function(r){ return r.remoteDid === currentSelection; })) {
+      sel.value = currentSelection;
+    }
+
+    // Detect if the peer list changed and log it
+    if (chatReadySnapshot !== lastChatReadySnapshot) {
+      console.log('[chat] loadPeers: peer list changed — ' + chatReady.length + ' chat-ready peer(s)');
+      lastChatReadySnapshot = chatReadySnapshot;
+    }
+  } catch(e) {
+    loadPeersErrorCount++;
+    console.error('[chat] loadPeers error (attempt ' + loadPeersErrorCount + '):', e);
+    // Only show "Error loading peers" after 3 consecutive failures
+    // to avoid a flash on the first transient error.
+    if (loadPeersErrorCount >= 3) {
+      var selEl = document.getElementById('peer-select');
+      // Preserve existing options if any — don't replace unless truly empty
+      if (selEl.options.length <= 1) {
+        selEl.innerHTML = '<option value="">Error loading peers — retrying…</option>';
+      }
+    }
+  }
+}
+
+// ── Select a peer to chat with ───────────────────────────────────────────
+
+function selectPeer(vid) {
+  if (!vid) {
+    document.getElementById('chat-box').style.display = 'none';
+    selectedPeer = null;
+    stopEventSource();
+    stopConnectionCheck();
+    return;
+  }
+  selectedPeer = vid;
+  clearNotification();
+  document.getElementById('chat-box').style.display = '';
+
+  // Identify the peer by their agent login name; keep the DID visible as
+  // secondary, monospace text (it is still the key used by every API below).
+  var name = peerNames[vid] || null;
+  var nameEl = document.getElementById('chat-peer-name');
+  if (name) {
+    nameEl.textContent = name;
+    nameEl.title = 'DID: ' + vid;
+  } else {
+    nameEl.textContent = shortDid(vid);
+    nameEl.title = vid;
+  }
+  var didEl = document.getElementById('chat-peer-did');
+  if (didEl) {
+    didEl.textContent = name ? ('DID ' + shortDid(vid)) : '';
+    didEl.title = name ? vid : '';
+  }
+
+  document.getElementById('messages').innerHTML = '<p class="muted" style="text-align:center; padding-top:40px;">Loading messages…</p>';
+  messageIds.clear();
+  loadChatLog(vid);
+  loadDtgVrcStatus(vid);
+  startEventSource();
+  startConnectionCheck();
+}
+
+// ── Toggle secure (confidential) mode ─────────────────────────────────────
+
+function toggleSecure() {
+  secureMode = !secureMode;
+  var btn = document.getElementById('secure-toggle');
+  if (secureMode) {
+    btn.textContent = '🔒 Confidential';
+    btn.classList.add('secure');
+  } else {
+    btn.textContent = '🔓 Plain';
+    btn.classList.remove('secure');
+  }
+}
+
+// ── Send a message ───────────────────────────────────────────────────────
+
+async function sendMessage() {
+  if (!selectedPeer) return;
+  var input = document.getElementById('msg-input');
+  var text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  var msgId = 'me-' + Date.now();
+  // Label the local echo with the signed-in agent's login name, falling back to
+  // "Me" until /api/identity answers.
+  addMessageToChat('me', text, msgId, secureMode, 'sending…', localAgentName || 'Me');
+
+  try {
+    var endpoint = secureMode
+      ? '/api/messages/' + selectedPeer + '/confidential'
+      : '/api/messages/' + selectedPeer;
+    await apiPost(endpoint, { body: text });
+    updateMessageStatus(msgId, 'sent ✓');
+  } catch(e) {
+    updateMessageStatus(msgId, 'failed: ' + e.message);
+    addMessageToChat('error', 'Failed to send: ' + e.message, 'err-' + Date.now(), false, null);
+  }
+}
+
+// ── Add a message to the chat display ─────────────────────────────────────
+
+/**
+ * Append one message bubble.
+ *
+ * Built with DOM nodes (never string-concatenated HTML) because both the message
+ * text and the sender's display name are remote-controlled: a peer could
+ * otherwise inject markup through its own name or message body.
+ *
+ * @param {string} side          'me' | 'peer' | 'error' | 'system'
+ * @param {string} text          message body
+ * @param {string} id            de-duplication key (also the DOM id suffix)
+ * @param {boolean} confidential confidential (HPKE) message
+ * @param {string|null} status   optional delivery status line
+ * @param {string} [labelOverride] sender label — the agent login name
+ */
+function addMessageToChat(side, text, id, confidential, status, labelOverride) {
+  if (messageIds.has(id)) return;
+  messageIds.add(id);
+
+  var container = document.getElementById('messages');
+  // Drop any placeholder ("Waiting for messages…" / "No messages yet…").
+  var placeholder = container.querySelector('.muted');
+  if (placeholder) placeholder.remove();
+
+  var cls = side === 'me' ? 'me' : (side === 'peer' ? 'peer' : (side === 'error' ? 'error' : 'system'));
+  if (confidential) cls += ' locked';
+  var label = labelOverride
+    || (side === 'me' ? 'Me' : (side === 'peer' ? 'Peer' : (side === 'error' ? 'Error' : 'System')));
+
+  var el = document.createElement('div');
+  el.className = 'chat-msg ' + cls;
+  el.id = 'msg-' + id;
+
+  var meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = label + ' · ' + new Date().toLocaleTimeString();
+  el.appendChild(meta);
+
+  var textEl = document.createElement('div');
+  textEl.className = 'text';
+  textEl.textContent = confidential ? '🔒 ' + text : text;
+  el.appendChild(textEl);
+
+  if (status) {
+    var statusEl = document.createElement('div');
+    statusEl.className = 'status';
+    statusEl.textContent = status;
+    el.appendChild(statusEl);
+  }
+
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
+}
+
+function updateMessageStatus(id, status) {
+  var msgEl = document.getElementById('msg-' + id);
+  if (!msgEl) return;
+  var existingStatus = msgEl.querySelector('.status');
+  if (existingStatus) {
+    existingStatus.textContent = status;
+    if (status.indexOf('sent') >= 0) existingStatus.classList.add('delivered');
+    if (status.indexOf('failed') >= 0) existingStatus.classList.add('failed');
+  } else {
+    var statusEl = document.createElement('div');
+    statusEl.className = 'status delivered';
+    statusEl.textContent = status;
+    msgEl.appendChild(statusEl);
+  }
+}
+
+// ── Live messages — shared subscription ─────────────────────────────────
+//
+// This page used to own an `EventSource` and close/reopen it on every peer switch, so the handler was re-bound to
+// the newly selected peer. The subscription below is registered once and reads `selectedPeer` at dispatch time,
+// so switching peers needs no reconnect — and the page now shares ONE connection with `nav.js` instead of
+// racing a second one against it.
+function startEventSource() {
+  if (pageSubscriptions.length || !window.AgentStack) return;
+  pageSubscriptions.push(AgentStack.on('message', function (msg) {
+    if (!msg) return;
+    // Property name: the server sends `remoteDid` (a DID). Older builds sent
+    // `remoteVid` for the same value; accept both so a cached page keeps working
+    // across the rename.
+    var msgDid = msg.remoteDid || msg.remoteVid;
+    if (msgDid === selectedPeer) {
+      // Label the bubble with the peer's agent login name (falls back to
+      // "Peer"). The id matches the transcript entry's id so a later
+      // re-render of the same session cannot double-render this message.
+      addMessageToChat('peer', msg.body, 'peer-' + msg.receivedAt, msg.confidential, null,
+        peerNames[msgDid] || 'Peer');
+    } else {
+      // Message from a peer not currently selected — show notification
+      showNotification();
+    }
+  }));
+  // A relationship changed — this replaced the 10 s per-peer connection poll. A peer becoming reachable or
+  // unreachable is a relationship change, so re-read the status of whichever peer is selected now.
+  pageSubscriptions.push(AgentStack.on('relationship-changed', function (d) {
+    if (!selectedPeer) return;
+    if (d && d.remoteDid && d.remoteDid !== selectedPeer) return;
+    checkConnection(selectedPeer);
+  }));
+}
+
+function stopEventSource() {
+  // The connection is shared with the nav badge, so it stays open; dropping the page's subscriptions is what
+  // stops this page from reacting.
+  while (pageSubscriptions.length) { pageSubscriptions.pop()(); }
+}
+
+// ── Chat transcript — replay this peer's session when it is selected ─────
+//
+// Each session is held in the agent's memory only (never a database or a file),
+// so switching peers replays that peer's text log and an agent logout drops every
+// session. The server is the single source of truth; the UI re-renders from it
+// rather than accumulating its own history.
+
+/**
+ * Fetch and render one peer's transcript. A render token guards against a slow
+ * response landing after the user has already switched to another peer.
+ */
+async function loadChatLog(vid) {
+  var token = ++chatLogRenderToken;
+  try {
+    var data = await apiGet('/api/chat/' + encodeURIComponent(vid) + '/log');
+    if (token !== chatLogRenderToken || selectedPeer !== vid) {
+      console.log('[chat] loadChatLog: discarding stale render for ' + vid.slice(0,12) + '...');
+      return;
+    }
+    if (data.localName) localAgentName = data.localName;
+    if (data.peerName && !peerNames[vid]) {
+      peerNames[vid] = data.peerName;
+      var nameEl = document.getElementById('chat-peer-name');
+      if (nameEl && nameEl.textContent === shortDid(vid)) {
+        nameEl.textContent = data.peerName;
+        nameEl.title = 'DID: ' + vid;
+        var didEl = document.getElementById('chat-peer-did');
+        if (didEl) { didEl.textContent = 'DID ' + shortDid(vid); didEl.title = vid; }
+      }
+    }
+    renderChatLog(data.entries || []);
+    console.log('[chat] loadChatLog: ' + (data.entries || []).length + ' entr(ies) for ' + vid.slice(0,12) + '...');
+  } catch(e) {
+    console.warn('[chat] loadChatLog error:', e);
+    var container = document.getElementById('messages');
+    if (selectedPeer === vid && container.querySelector('.muted')) {
+      container.innerHTML = '<p class="muted" style="text-align:center; padding-top:40px;">Unable to load this chat history.</p>';
+    }
+  }
+}
+
+/**
+ * Replace the message area with a transcript. Entry ids come from the server's
+ * per-session entry time, which is unique within the session — the same id a
+ * live SSE push uses, so the shared messageIds set de-duplicates both paths.
+ */
+function renderChatLog(entries) {
+  var container = document.getElementById('messages');
+  messageIds.clear();
+  container.innerHTML = '';
+  if (!entries.length) {
+    container.innerHTML = '<p class="muted" style="text-align:center; padding-top:40px;">No messages yet — new messages start a new log.</p>';
+    return;
+  }
+  entries.forEach(function(entry) {
+    addMessageToChat(entry.side, entry.text, entry.side + '-' + entry.time, !!entry.confidential, null,
+      entry.agentName || (entry.side === 'me' ? 'Me' : 'Peer'));
+  });
+}
+
+// ── Clear History — scoped to the peer currently on screen ───────────────
+
+async function clearHistory() {
+  if (!selectedPeer) return;
+  var peer = selectedPeer;
+  var who = peerNames[peer] || shortDid(peer);
+  if (!confirm('Clear the chat history with ' + who + '?\n\nOnly this conversation is cleared, and it is held in memory only — it cannot be recovered.')) {
+    return;
+  }
+  try {
+    var res = await apiPost('/api/chat/' + encodeURIComponent(peer) + '/clear', {});
+    if (selectedPeer !== peer) return; // switched peers while the request was in flight
+    messageIds.clear();
+    ++chatLogRenderToken; // invalidate any in-flight transcript render
+    document.getElementById('messages').innerHTML =
+      '<p class="muted" style="text-align:center; padding-top:40px;">History cleared — new messages start a new log.</p>';
+    console.log('[chat] clearHistory: cleared ' + (res && res.cleared) + ' entr(ies) for ' + peer.slice(0,12) + '...');
+  } catch(e) {
+    console.error('[chat] clearHistory failed:', e);
+    addMessageToChat('error', 'Failed to clear history: ' + e.message, 'clear-err-' + Date.now(), false, null);
+  }
+}
+
+// ── DTG VRC verified badge ──────────────────────────────────────────
+
+async function loadDtgVrcStatus(vid) {
+  var badge = document.getElementById("dtg-vrc-badge");
+  if (!badge || !vid) return;
+  try {
+    var data = await apiGet("/api/relationships/" + encodeURIComponent(vid) + "/dtg-vrc");
+    badge.style.display = "";
+    if (data.verified) {
+      badge.className = "vrc-badge vrc-verified";
+      badge.textContent = "✓ VRC";
+      badge.title = "DTG RelationshipCredential issued";
+    } else {
+      badge.textContent = "🔓";
+      badge.title = "Not DTG-verified";
+    }
+  } catch(e) { /* ignore */ }
+}
+
+
+async function init() {
+  var active = await requireActiveAgent();
+  if (!active) return;
+
+  // Poll /api/ready until the agent and relationship store are ready.
+  // This prevents the "Error loading peers" flash on initial page load.
+  var readyAttempts = 0;
+  while (readyAttempts < 30) {
+    readyAttempts++;
+    try {
+      var readyCheck = await fetch('/api/ready');
+      if (readyCheck.ok) {
+        var readyData = await readyCheck.json();
+        if (readyData.ready) {
+          console.log('[chat] init: server ready after ' + readyAttempts + ' attempt(s) — ' + readyData.chatReadyCount + ' chat-ready peer(s)');
+          break;
+        }
+        console.log('[chat] init: server not ready yet (' + readyData.reason + ') — attempt ' + readyAttempts + '/30');
+      }
+    } catch(e) {
+      console.warn('[chat] init: /api/ready fetch failed (attempt ' + readyAttempts + '):', e.message);
+    }
+    await new Promise(function(r) { setTimeout(r, 1000); });
+  }
+
+  // Grab the signed-in agent's own login name so locally-sent messages are
+  // labelled with it (falls back to "Me").
+  try {
+    var identity = await apiGet('/api/identity');
+    if (identity && identity.name) localAgentName = identity.name;
+  } catch(e) {
+    console.warn('[chat] init: could not read /api/identity for the local name:', e.message);
+  }
+
+  await loadPeers();
+  // No interval: the peer list is re-read when a relationship actually changes. Registered at init (not inside
+  // `startEventSource`) because the peer list must stay fresh even with no peer selected.
+  if (window.AgentStack) {
+    AgentStack.on('relationship-changed', function () { loadPeers(); });
+  }
+
+  // Prevent the "Chat" nav link from causing a full page reload when
+  // the user is already on the chat page. Clicking it should either do
+  // nothing (same page) or preserve the ?peer= URL parameter.
+  var chatNavLink = document.querySelector('nav a[href="chat.html"]');
+  if (chatNavLink) {
+    chatNavLink.addEventListener('click', function(e) {
+      e.preventDefault();
+      // Refresh peer list in-place instead of reloading
+      loadPeers();
+      // If a peer was selected, restore the URL param
+      if (selectedPeer) {
+        var url = new URL(window.location);
+        url.searchParams.set('peer', selectedPeer);
+        window.history.replaceState({}, '', url);
+      }
+    });
+  }
+}
+
+init();
+window.addEventListener('beforeunload', function(){ stopEventSource(); stopConnectionCheck(); });
+</script>
+</body>
+</html>
