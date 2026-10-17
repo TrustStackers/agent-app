@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Supersede an in-flight run when a branch is pushed again.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: typecheck + license gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x' # >=22.5.0: the stack uses the built-in node:sqlite
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Every source file must carry an SPDX header. `examples/` is a separate
+      # Apache-2.0 work with its own headers, so it is excluded here.
+      - name: License headers (SPDX)
+        run: node scripts/add-spdx-headers.mjs --check --exclude=examples .
+
+      # No copyleft runtime dependencies. The commercial branch cannot cover a
+      # third-party copyleft dependency, so one would make the whole repository
+      # unlicensable commercially. Policy: CONTRIBUTING.md.
+      - name: Dependency licenses
+        run: node scripts/check-dependency-licenses.mjs .
+
+      - name: Typecheck
+        run: npm run typecheck

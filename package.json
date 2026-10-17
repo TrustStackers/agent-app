@@ -9,9 +9,15 @@
     "tui": "CEREMONY_TRACE=1 P2PTS_LOG_LEVEL=info node --experimental-strip-types --loader ./test-loader.mjs tui/app.ts",
     "web": "CEREMONY_TRACE=1 P2PTS_LOG_LEVEL=info node --experimental-strip-types --loader ./test-loader.mjs web/server.ts",
     "start": "npm run web",
-    "init:bootstrap": "node --experimental-strip-types --loader ./test-loader.mjs ./scripts/init-bootstrap-env.ts"
+    "init:bootstrap": "node --experimental-strip-types --loader ./test-loader.mjs ./scripts/init-bootstrap-env.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "license:headers": "node scripts/add-spdx-headers.mjs --exclude=examples .",
+    "license:check": "node scripts/add-spdx-headers.mjs --check --exclude=examples . && node scripts/check-dependency-licenses.mjs ."
   },
-  "license": "UNLICENSED",
+  "license": "GPL-3.0-only OR LicenseRef-TrustStackers-Commercial",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "dependencies": {
     "@fastify/static": "^8.0.0",
     "@p2p-trust-stack/app-api": "^0.1.0",

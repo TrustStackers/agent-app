@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-TrustStackers-Commercial
+// Copyright (C) 2026 Trust Stackers
+
 /**
  * init-bootstrap-env — initialize this agent app's bootstrap/relay identity
  * + address.
