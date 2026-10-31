@@ -24,10 +24,21 @@ not a supported product.
 ## Quick start
 
 ```bash
-npm ci                 # reproducible install from the committed lockfile
+# 1. Install (reproducible, from the committed lockfile)
+npm ci
+
+# 2. Write ./.env — the bootstrap/relay this agent registers with. Keep the phrase
+#    file OUTSIDE the repo; it is the relay's private key. See "Pointing the agent
+#    at a bootstrap node" below, including the shared development relay.
+npm run init:bootstrap -- --words-file ~/data/phrase.txt --host relay.truststackers.com
+
+# 3. Run
 npm run tui            # terminal UI
-npm run web            # browser UI on http://127.0.0.1:24010
+npm run web            # …or the browser UI on http://127.0.0.1:24010
 ```
+
+Skipping step 2 is fine — the agent then runs in **LAN-only** mode and will not
+appear on the wider network.
 
 Target a specific agent directly:
 
@@ -50,7 +61,7 @@ phrase:
 ```bash
 # Keep the phrase file OUTSIDE this repo (e.g. ~/data/phrase.txt) — it is the
 # relay's PRIVATE KEY.
-npm run init:bootstrap -- --words-file ~/data/phrase.txt --host mediator.fpndtg.com
+npm run init:bootstrap -- --words-file ~/data/phrase.txt --host relay.truststackers.com
 ```
 
 The agent is a **client** of the relay: the tool writes the peer ID + address and
@@ -70,7 +81,7 @@ bomb miracle trend garment noble chicken range account gravity shoe sense
 ```
 
 It derives peer ID `12D3KooWKF2Tmh21NNSH5gWazfbmFEtTZS9XT1uXk8njFAy5jUda` at host
-`mediator.fpndtg.com`. Because that phrase is public, **anyone can impersonate the
+`relay.truststackers.com`. Because that phrase is public, **anyone can impersonate the
 relay** — treat anything you send through it as observable. Use it only for
 exploration and demos.
 
