@@ -123,7 +123,14 @@ async function loadVtaList() {
     document.getElementById('stat-ai').textContent = counts.ai_agent;
     document.getElementById('stat-total').textContent = vtas.length;
     el.innerHTML = vtas.map(function(v) {
-      return '<div class="entity-row"><div class="avatar">'+initials(v.name)+'</div><div><div class="name">'+esc(v.name || '(unnamed)')+' '+(KIND_ICON[v.subjectKind]||'')+'</div><div class="meta"><code>'+short(v.did,40)+'</code> · '+v.custody+' · '+(KIND_LABEL[v.subjectKind]||v.subjectKind)+'</div></div><span class="spacer"></span><span class="badge badge-green">'+v.custody+'</span></div>';
+      // `custody`/`subjectKind` come from `identity.list()`, which opens each agent's own database. In
+      // login-only mode there is no layer to do that (see GET /api/agents), so the endpoint falls back to the
+      // host's cheap listing and those two fields are absent. Every agent the listing returns has already been
+      // filtered to role='vta' AND custody='local', so 'local' is a statement of fact rather than a guess;
+      // the kind is genuinely unknown until an agent is unlocked, and is labelled as such.
+      var custody = v.custody || 'local';
+      var kind = v.subjectKind || 'unknown';
+      return '<div class="entity-row"><div class="avatar">'+initials(v.name)+'</div><div><div class="name">'+esc(v.name || '(unnamed)')+' '+(KIND_ICON[kind]||'')+'</div><div class="meta"><code>'+short(v.did,40)+'</code> · '+custody+' · '+(KIND_LABEL[kind]||kind)+'</div></div><span class="spacer"></span><span class="badge badge-green">'+custody+'</span></div>';
     }).join('');
   } catch (err) { el.innerHTML = '<p class="muted">Failed to load VTAs: '+esc(err.message)+'</p>'; }
 }

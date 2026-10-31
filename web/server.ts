@@ -15,7 +15,7 @@
  *   # or with env vars:
  *   AGENT_NAME=alice AGENT_PASSPHRASE=secret npm run web
  *   # or with args:
- *   node --experimental-strip-types --loader ./test-loader.mjs web/server.ts alice secret
+ *   node --experimental-strip-types --loader ../../test-loader.mjs agent-app/web/server.ts alice secret
  *
  * If no agent name/passphrase is provided, the server starts showing the
  * VTA login screen. No bootstrap agent is created — the user must register
@@ -25,11 +25,85 @@
 import {
   createNodeHost,
   createAgentStack,
+  createBootstrapConfigApi,
+  createLoggingConfigApi,
   type AgentHandle,
+  type BootstrapConfigView,
   type Host,
   type TrustStack,
 } from '@p2p-trust-stack/app-api/index.js';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildWebServer } from '../src/web-server.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Where this component's bootstrap setting comes from.
+ *
+ * A CLIENT: the agent holds no seed, only the address and the peer ID to expect.
+ * The precedence chain and the persistence rule live behind the layer in
+ * `bootstrap-config.ts`, so the TUI reads and writes exactly the same thing.
+ */
+const bootstrapConfig = createBootstrapConfigApi({
+  // `agent-app/.env` — one level up from `web/`.
+  envPath: join(__dirname, '..', '.env'),
+  onPersist: (message) => console.log(`[agent-web] ${message}`),
+});
+
+/**
+ * Where this component's LOG VERBOSITY comes from.
+ *
+ * The same `.env` the bootstrap block lives in, so the npm script needs no
+ * `P2PTS_LOG_LEVEL=info` prefix — that POSIX-only syntax is exactly what broke
+ * `npm start` under PowerShell. `apply()` cannot throw, so an absent `.env` (a
+ * LAN-only first run) simply leaves logging at its default.
+ */
+const loggingConfig = createLoggingConfigApi({
+  envPath: join(__dirname, '..', '.env'),
+  onApply: (message) => console.log(`[agent-web] ${message}`),
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Pre-fill values for the startup screen's bootstrap boxes.
+ *
+  * Reports WHERE the value came from (the persisted override, or the `.env`), so
+ * the UI can say "default" vs "you set this". Never throws — the login screen has
+ * to render even when nothing is configured.
+ */
+function bootstrapConfigView(): BootstrapConfigView {
+  return bootstrapConfig.view();
+}
+
+/**
+ * Persist the startup screen's bootstrap boxes, but ONLY when they differ from
+ * this component's `.env` — the `.env` stays the machine default, and
+ * `P2PTS_HOME/config.yaml` records a deliberate override.
+ */
+function persistBootstrapOverride(bootstrapHost?: string, bootstrapPeerId?: string): void {
+  bootstrapConfig.recordOverride(bootstrapHost, bootstrapPeerId);
+}
+
+/** Remember the VTN this machine joined, so the next launch registers under it. */
+function persistVtn(vtnKey: string): void {
+  bootstrapConfig.recordVtn(vtnKey);
+}
+
+/**
+ * The VTN this machine last joined, or undefined.
+ *
+ * Used to register under the right network from first contact on a restart. It
+ * is deliberately undefined rather than defaulted when nothing is recorded: an
+ * agent that has not chosen a VTN sends no `net` at all, instead of claiming
+ * another network's key.
+ */
+function lastJoinedVtn(): string | undefined {
+  return bootstrapConfig.lastVtn();
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,6 +123,9 @@ function resolveNamePassphrase(): { name: string; passphrase: string } | null {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  // Verbosity first, so every later line is gated by the configured level.
+  loggingConfig.apply();
+
   const PORT = parseInt(process.env.AGENT_WEB_PORT ?? '24010', 10);
   const creds = resolveNamePassphrase();
 
@@ -82,17 +159,25 @@ async function main() {
   if (creds) {
     // Named agent requested — unlock (or create) it, through the host.
     const existingNames = host.listAgents().map(a => a.name);
+    // The persisted/`.env` bootstrap target and the VTN this machine last joined,
+    // so a restart re-registers under the same network from first contact.
+    const bootstrapEnv = bootstrapConfig.resolve();
+    const lastVtn = bootstrapConfig.lastVtn();
     if (existingNames.includes(creds.name)) {
       console.log(`[agent-web] Unlocking agent "${creds.name}"...`);
       agent = await host.unlockAgent({
         name: creds.name,
         passphrase: creds.passphrase,
+        ...(bootstrapEnv ? { bootstrapEnv } : {}),
+        ...(lastVtn ? { net: lastVtn } : {}),
       });
     } else {
       console.log(`[agent-web] Creating new agent "${creds.name}"...`);
       agent = await host.createAgent({
         name: creds.name,
         passphrase: creds.passphrase,
+        ...(bootstrapEnv ? { bootstrapEnv } : {}),
+        ...(lastVtn ? { net: lastVtn } : {}),
       });
     }
   } else {
@@ -118,7 +203,12 @@ async function main() {
 
   // ── Activation callback — unlocks + starts a VTA ───────────────────
   const onActivateAgent = async (
-    params: { name: string; passphrase: string },
+    params: {
+      name: string;
+      passphrase: string;
+      bootstrapHost?: string;
+      bootstrapPeerId?: string;
+    },
   ): Promise<{ agent: AgentHandle; stack: TrustStack }> => {
     console.log(`[agent-web] Activating agent "${params.name}"...`);
 
@@ -127,10 +217,23 @@ async function main() {
       await agent.stop();
     }
 
+    // The bootstrap boxes travel with activation. Record a value the user CHANGED
+    // (so it survives a restart) — accepting the `.env` default records nothing.
+    persistBootstrapOverride(params.bootstrapHost, params.bootstrapPeerId);
+
+    // Resolve the effective target: a freshly typed value wins over the stored
+    // one, which wins over `.env`. Empty everywhere = LAN-only mode.
+    const bootstrapEnv = bootstrapConfig.resolve();
+
     // Unlock the requested agent — through the host, which owns the lifecycle.
     const newAgent = await host.unlockAgent({
       name: params.name,
       passphrase: params.passphrase,
+      ...(bootstrapEnv ? { bootstrapEnv } : {}),
+      // Re-register under the VTN this machine last joined. Absent on a first
+      // run, in which case the agent sends NO `net` rather than a guessed one —
+      // the login screen's VTN picker sets it.
+      ...(lastJoinedVtn() ? { net: lastJoinedVtn()! } : {}),
     });
 
     // Start the new agent
@@ -148,48 +251,34 @@ async function main() {
 
     console.log(`[agent-web] Agent "${params.name}" activated (VID: ${newAgent.getVid().slice(0, 20)}...)`);
 
-    // ── Auto-discover and connect to utility servers ──────────────────
-    // After the agent starts and registers with bootstrap, look for utility_server peers and auto-connect to the
-    // first available one.
+    // ── Report the VTNs available to join ─────────────────────────────
     //
-    // Through the layer: `connectivity.status()` carries the discovered peers and `connectUtility()` is the same
-    // operation the runtime's `configureUtilityServer` performed. This block used to call both on the handle.
+    // The agent has now registered with the bootstrap, so the peer directory is
+    // populated. This does NOT auto-connect: several utility servers can share one
+    // bootstrap, each serving its own VTN, so the user picks the network from the
+    // login screen (`GET /api/vtns` → `POST /api/vtns/connect`) and the agent
+    // dials the peer that serves it.
     try {
       const allPeers = (await stack.connectivity.status()).discoveredPeers;
       console.log(`[agent-web:discovery] total discovered peers: ${allPeers.length}`);
-      for (const p of allPeers) {
-        console.log(`[agent-web:discovery]   peer ${p.peerId.slice(0, 12)}... type=${p.peerType ?? 'undefined'} vid=${p.vid?.slice(0, 12) ?? 'none'} connected=${p.connected} reachable=${p.reachable} addrs=${p.multiaddrs.length}`);
-      }
-      const utilityServers = allPeers.filter(p => p.peerType === 'utility_server');
-      console.log(`[agent-web:discovery] utility servers found: ${utilityServers.length}`);
-      if (utilityServers.length > 0) {
-        const us = utilityServers[0];
-        const vid = us.vid || us.peerId;
-        console.log(`[agent-web:discovery] Auto-connecting to utility server ${us.peerId.slice(0, 12)}... (vid: ${vid.slice(0, 12)}..., addrs: ${us.multiaddrs.join(', ')})`);
-        try {
-          const { encodeOobi } = await import('@p2p-trust-stack/core/relationship/oobi.js');
-          if (!us.did) {
-            // Strict 4-item OOBI requires the server's real DID from discovery.
-            console.warn(`[agent-web:discovery] utility server ${us.peerId.slice(0, 12)}... has no DID — strict OOBI cannot be built; skipping auto-connect`);
-          } else {
-            const oobi = encodeOobi({
-              cesrVid: vid,
-              peerId: us.peerId,
-              multiaddrs: us.multiaddrs,
-              did: us.did,
-            });
-            await stack.connectivity.connectUtility(oobi);
-            console.log(`[agent-web:discovery] ✓ Auto-connected to utility server via bootstrap discovery`);
-          }
-        } catch (err) {
-          console.warn(`[agent-web:discovery] Auto-connect to utility server failed: ${(err as Error)?.message ?? err}`);
-        }
+      const vtns = await stack.connectivity.vtns();
+      if (vtns.length === 0) {
+        console.log(
+          '[agent-web:discovery] No VTNs discovered via bootstrap. Name registration stays ' +
+          'unavailable until a utility server registers a namespace.',
+        );
       } else {
-        console.log('[agent-web:discovery] No utility servers discovered via bootstrap. Name registration will be unavailable until a utility server connects.');
+        console.log(`[agent-web:discovery] VTNs available to join: ${vtns.length}`);
+        for (const v of vtns) {
+          console.log(
+            `[agent-web:discovery]   ${v.vtnKey}${v.vtnName ? ` "${v.vtnName}"` : ''} — ` +
+            `peer ${v.peerId.slice(0, 12)}... connected=${v.connected} reachable=${v.reachable}`,
+          );
+        }
       }
     } catch (err) {
-      // A transport that cannot configure a utility server at all (or a failed status read) must not stop
-      // activation — the agent is already up, which is what the caller asked for.
+      // A transport that cannot read discovery at all must not stop activation —
+      // the agent is already up, which is what the caller asked for.
       console.warn(`[agent-web:discovery] Discovery skipped: ${(err as Error)?.message ?? err}`);
     }
 
@@ -216,6 +305,10 @@ async function main() {
     stack: stack ?? undefined,
     onActivateAgent,
     onDeactivateAgent,
+    // Pre-fill the startup screen's bootstrap boxes (config.yaml override → .env).
+    bootstrapConfig: bootstrapConfigView,
+    // Remember the VTN the user picked, so a restart registers under it.
+    onVtnConnected: persistVtn,
   });
 
   try {

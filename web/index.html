@@ -26,12 +26,34 @@
   .passphrase-section.visible { display: block; }
   .error-msg { color: #f87171; margin-top: 8px; display: none; }
   .hint { font-size: 11px; color: #64748b; margin-top: 4px; }
+  .vtn-section { display: none; margin-top: 16px; }
+  .vtn-section.visible { display: block; }
+  .ok-msg { color: #34d399; margin-top: 8px; display: none; }
 </style>
 </head>
 <body class="no-sidebar">
 <div class="gate">
   <h1 class="gate-title">My Trust Agent</h1>
   <p class="gate-sub muted">Verified Trust Agent console</p>
+
+  <!-- ── Bootstrap server ────────────────────────────────────────────────
+       The agent is a CLIENT: it holds no seed, only the address of the
+       bootstrap/relay to register with and the peer ID to expect. These are
+       pre-filled from this machine's saved setting or agent-app/.env — accept
+       the default, or change them to point at a different bootstrap server. -->
+  <div class="card" id="bootstrap-card">
+    <h2>Bootstrap server</h2>
+    <p class="muted" style="margin-bottom:12px;">Where this agent registers to find peers and utility servers. Pre-filled from your saved setting or <code>.env</code>.</p>
+    <div class="form-group">
+      <label for="bootstrap-host">Bootstrap host / IP address</label>
+      <input type="text" id="bootstrap-host" placeholder="e.g. 203.0.113.5 or bootstrap.example.com" style="width:100%;">
+    </div>
+    <div class="form-group">
+      <label for="bootstrap-peer-id">Bootstrap peer ID</label>
+      <input type="text" id="bootstrap-peer-id" placeholder="12D3KooW…" style="width:100%;font-family:monospace;font-size:12px;">
+      <div class="hint" id="bootstrap-source"></div>
+    </div>
+  </div>
 
   <div class="tabs" role="tablist">
     <button class="tab active" data-tab="login" onclick="switchTab('login')">🔑 Log in with VTA</button>
@@ -53,6 +75,22 @@
         </div>
         <button class="btn btn-primary" id="activate-btn" onclick="activateAgent()" style="width:100%;">🔓 Unlock VTA</button>
         <p id="activate-error" class="error-msg"></p>
+      </div>
+
+      <!-- ── VTN picker ──────────────────────────────────────────────────
+           Several utility servers can share one bootstrap server, each serving
+           its own VTN. The list is read from the bootstrap peer directory once
+           this VTA has registered; picking one adopts its key and dials the
+           utility server that serves it. -->
+      <div id="vtn-section" class="vtn-section">
+        <div class="form-group">
+          <label for="vtn-select">Network to join (VTN)</label>
+          <select id="vtn-select" style="width:100%;"></select>
+          <div class="hint" id="vtn-hint"></div>
+        </div>
+        <button class="btn btn-primary" id="vtn-btn" onclick="connectVtn()" style="width:100%;">🔗 Connect to network</button>
+        <p id="vtn-error" class="error-msg"></p>
+        <p id="vtn-ok" class="ok-msg"></p>
       </div>
     </div>
   </div>
@@ -181,14 +219,104 @@ async function activateAgent() {
   btn.textContent = 'Unlocking…';
   errEl.style.display = 'none';
   try {
-    await apiPost('/api/activate', { name: selectedAgentName, passphrase: passphrase });
+    await apiPost('/api/activate', {
+      name: selectedAgentName,
+      passphrase: passphrase,
+      // The bootstrap boxes travel with activation: the agent is a CLIENT, so this
+      // is how it learns which bootstrap server to dial. Empty = use .env.
+      bootstrapHost: document.getElementById('bootstrap-host').value.trim(),
+      bootstrapPeerId: document.getElementById('bootstrap-peer-id').value.trim(),
+    });
     btn.textContent = '✓ Activated!';
-    window.location.href = 'dashboard.html';
+    // The VTA has registered with the bootstrap, so the peer directory now holds
+    // the utility servers and their VTNs. Show the picker instead of navigating
+    // away — the user still has to choose which network to join.
+    await loadVtns();
   } catch(e) {
     errEl.textContent = e.message;
     errEl.style.display = 'block';
     btn.disabled = false;
     btn.textContent = '🔓 Unlock VTA';
+  }
+}
+
+// ── Bootstrap boxes ────────────────────────────────────────────────────
+// Pre-fill from the saved setting or agent-app/.env, so "accept the default" is
+// one click. Never blocks the page: an unconfigured machine renders empty boxes.
+async function loadBootstrapConfig() {
+  var note = document.getElementById('bootstrap-source');
+  try {
+    var cfg = await apiGet('/api/bootstrap/config');
+    document.getElementById('bootstrap-host').value = cfg.host || '';
+    document.getElementById('bootstrap-peer-id').value = cfg.peerId || '';
+    if (cfg.source === 'config') {
+      note.textContent = 'Using the bootstrap server you set previously. Change it above to use a different one.';
+    } else if (cfg.source === 'env') {
+      note.textContent = 'Default from .env — accept it, or replace both values.';
+    } else {
+      note.textContent = 'No bootstrap server configured. Fill both in, or leave blank to run in LAN-only mode.';
+    }
+  } catch(e) {
+    note.textContent = 'Could not read the bootstrap defaults: ' + e.message;
+  }
+}
+
+// ── VTN picker ─────────────────────────────────────────────────────────
+// One entry per VTN key. The agent registers as `net` under whichever key is
+// chosen, and dials the utility server that serves it.
+async function loadVtns() {
+  var section = document.getElementById('vtn-section');
+  var sel = document.getElementById('vtn-select');
+  var hint = document.getElementById('vtn-hint');
+  var errEl = document.getElementById('vtn-error');
+  errEl.style.display = 'none';
+  section.classList.add('visible');
+  sel.innerHTML = '<option value="">Loading networks…</option>';
+  try {
+    var vtns = await apiGet('/api/vtns');
+    if (!vtns || vtns.length === 0) {
+      sel.innerHTML = '';
+      hint.textContent = 'No networks (VTNs) are registered on this bootstrap server yet. Ask the network operator to finish their utility-server setup, then unlock the VTA again.';
+      document.getElementById('vtn-btn').disabled = true;
+      return;
+    }
+    sel.innerHTML = vtns.map(function(v) {
+      var label = v.vtnKey + (v.vtnName ? ' — ' + v.vtnName : '');
+      return '<option value="' + v.vtnKey + '">' + label + '</option>';
+    }).join('');
+    hint.textContent = 'The key in brackets is what this agent registers as, so the bootstrap shows it on the right network.';
+    document.getElementById('vtn-btn').disabled = false;
+  } catch(e) {
+    sel.innerHTML = '';
+    hint.textContent = '';
+    errEl.textContent = 'Could not list networks: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function connectVtn() {
+  var sel = document.getElementById('vtn-select');
+  var vtnKey = sel.value;
+  var errEl = document.getElementById('vtn-error');
+  var okEl = document.getElementById('vtn-ok');
+  var btn = document.getElementById('vtn-btn');
+  errEl.style.display = 'none';
+  okEl.style.display = 'none';
+  if (!vtnKey) return;
+  btn.disabled = true;
+  btn.textContent = 'Connecting…';
+  try {
+    await apiPost('/api/vtns/connect', { vtnKey: vtnKey });
+    okEl.textContent = '✓ Connected to ' + vtnKey + '. Opening your dashboard…';
+    okEl.style.display = 'block';
+    window.location.href = 'dashboard.html';
+  } catch(e) {
+    // The server reports the layer-aware reason (bootstrap unreachable, relay
+    // refreshing, or no server for that VTN) — show it as-is.
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = '🔗 Connect to network';
   }
 }
 
@@ -211,8 +339,15 @@ document.getElementById('vta-form').addEventListener('submit', async function(e)
     await apiPost('/api/agents', { name: name, subjectKind: subjectKind, passphrase: passphrase });
     btn.textContent = 'Activating…';
     try {
-      await apiPost('/api/activate', { name: name, passphrase: passphrase });
-      window.location.href = 'dashboard.html';
+      await apiPost('/api/activate', {
+        name: name,
+        passphrase: passphrase,
+        bootstrapHost: document.getElementById('bootstrap-host').value.trim(),
+        bootstrapPeerId: document.getElementById('bootstrap-peer-id').value.trim(),
+      });
+      // New VTA is registered with the bootstrap — pick the network to join.
+      switchTab('login');
+      await loadVtns();
     } catch (activateErr) {
       errEl.textContent = 'VTA registered but activation failed: ' + activateErr.message + '. Go to the dashboard to activate.';
       errEl.style.display = 'block';
@@ -246,8 +381,15 @@ document.getElementById('import-form').addEventListener('submit', async function
     await apiPost('/api/agents/import', { name: name, mnemonic: mnemonic, passphrase: passphrase });
     btn.textContent = 'Activating…';
     try {
-      await apiPost('/api/activate', { name: name, passphrase: passphrase });
-      window.location.href = 'dashboard.html';
+      await apiPost('/api/activate', {
+        name: name,
+        passphrase: passphrase,
+        bootstrapHost: document.getElementById('bootstrap-host').value.trim(),
+        bootstrapPeerId: document.getElementById('bootstrap-peer-id').value.trim(),
+      });
+      // Imported VTA is registered with the bootstrap — pick the network to join.
+      switchTab('login');
+      await loadVtns();
     } catch (activateErr) {
       errEl.textContent = 'VTA imported but activation failed: ' + activateErr.message + '. Go to the dashboard to activate.';
       errEl.style.display = 'block';
@@ -263,6 +405,7 @@ document.getElementById('import-form').addEventListener('submit', async function
 });
 
 // ── Init ───────────────────────────────────────────────────────────────
+loadBootstrapConfig();
 loadAgents();
 document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('passphrase-input').addEventListener('keydown', function(e) {

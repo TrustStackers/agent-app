@@ -7,7 +7,14 @@ import { readFileSync } from 'node:fs';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 
-import type { AgentHandle, Host, TrustStack, CredentialViewFilters } from '@p2p-trust-stack/app-api/index.js';
+import type {
+  AgentHandle,
+  BootstrapConfigView,
+  ConnectivityFailureKind,
+  CredentialViewFilters,
+  Host,
+  TrustStack,
+} from '@p2p-trust-stack/app-api/index.js';
 import { createSseHub, bridgeEventsToSse } from './sse-bridge.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -23,14 +30,22 @@ function hasAgent(agent: AgentHandle | null): agent is AgentHandle {
  *
  * Replaces the context-free "Utility server unavailable." text with one that
  * names WHICH layer failed (bootstrap unreachable / connection lost and still
- * reconnecting / relay session being refreshed) and states that the work is
- * queued and will be retried — so a user can tell "wait a moment" from
- * "something is actually wrong".
+ * reconnecting / relay session being refreshed) and states what happens next —
+ * so a user can tell "wait a moment" from "something is actually wrong".
+ *
+ * `kind` is forwarded to the layer so a failed CONNECTION does not get the
+ * mutation wording. "Your change has been kept locally and will be sent
+ * automatically once the connection is back" is true for a write and false for a
+ * join, which is where users were seeing it.
  *
  * Falls back to the generic wording when the active agent implementation does
  * not expose live connectivity status (e.g. a test stub).
  */
-async function utilityServerUnavailable(deps: WebServerDeps, operation: string): Promise<string> {
+async function utilityServerUnavailable(
+  deps: WebServerDeps,
+  operation: string,
+  kind?: ConnectivityFailureKind,
+): Promise<string> {
   // Through the layer, not around it: `connectivity.explainFailure()` reads the live view and words it. This used
   // to read `deps.agent.getConnectivityStatus()` directly (one of 21 reaches no ratchet could see) AND import
   // `describeConnectivityFailure` from `src/` to turn the result into a sentence — a presentation decision the
@@ -40,7 +55,7 @@ async function utilityServerUnavailable(deps: WebServerDeps, operation: string):
   // wording. The only remaining branch is "no layer configured", which is a different condition and gets the
   // same wording.
   if (!deps.stack) return `Utility server unavailable. Cannot ${operation} right now.`;
-  return deps.stack.connectivity.explainFailure(operation);
+  return deps.stack.connectivity.explainFailure(operation, kind);
 }
 
 /**
@@ -102,13 +117,37 @@ export interface WebServerDeps {
    * around it (see {@link ActivatedAgent}); the route stores both on `deps`. The
    * layer has to come back with the handle because the entrypoint owns the
    * lifecycle and may only have created the stack during this very call.
+   *
+   * `bootstrapHost` / `bootstrapPeerId` come from the startup screen's bootstrap
+   * boxes: the agent is a CLIENT, so these are the whole of what it knows about
+   * the bootstrap server it should dial. Absent means "use the component's
+   * `.env`", which the entrypoint resolves.
    */
-  onActivateAgent?: (params: { name: string; passphrase: string }) => Promise<ActivatedAgent>;
+  onActivateAgent?: (params: {
+    name: string;
+    passphrase: string;
+    bootstrapHost?: string;
+    bootstrapPeerId?: string;
+  }) => Promise<ActivatedAgent>;
   /**
    * Callback invoked on POST /api/logout to stop the active agent and
    * return the user to the VTA selection screen.
    */
   onDeactivateAgent?: () => Promise<void>;
+  /**
+   * The bootstrap values the startup screen's boxes are pre-filled with.
+   *
+   * Read from `P2PTS_HOME/config.yaml` (a value the user previously typed) or,
+   * failing that, this component's `.env`. `source` tells the UI which it is, so
+   * "accept the default" and "I typed this" are distinguishable.
+   */
+  bootstrapConfig?: () => BootstrapConfigView;
+  /**
+   * Called after an agent successfully joins a VTN, so the choice can be
+   * persisted and reused on the next launch (the agent registers under that key
+   * from first contact, instead of joining with no `net`).
+   */
+  onVtnConnected?: (vtnKey: string) => void | Promise<void>;
 }
 
 export async function buildWebServer(deps: WebServerDeps) {
@@ -240,7 +279,12 @@ export async function buildWebServer(deps: WebServerDeps) {
 
   // ── Agent activation (VTA login) ─────────────────────────────────────
   app.post('/api/activate', async (req, reply) => {
-    const { name, passphrase } = req.body as { name?: string; passphrase?: string };
+    const { name, passphrase, bootstrapHost, bootstrapPeerId } = req.body as {
+      name?: string;
+      passphrase?: string;
+      bootstrapHost?: string;
+      bootstrapPeerId?: string;
+    };
     if (!name || !passphrase) {
       return reply.code(400).send({ error: { message: 'name and passphrase are required' } });
     }
@@ -248,7 +292,15 @@ export async function buildWebServer(deps: WebServerDeps) {
       return reply.code(501).send({ error: { message: 'Agent activation not supported in this deployment mode' } });
     }
     try {
-      const { agent: newAgent, stack: newStack } = await deps.onActivateAgent({ name, passphrase });
+      // The bootstrap boxes on the startup screen travel with activation: the
+      // agent is a CLIENT, so this is the only channel by which it learns which
+      // bootstrap server to dial. Both empty = "use this component's `.env`".
+      const { agent: newAgent, stack: newStack } = await deps.onActivateAgent({
+        name,
+        passphrase,
+        bootstrapHost,
+        bootstrapPeerId,
+      });
       // Swap the active agent AND the layer so all subsequent handlers use the new VTA. Both must be
       // replaced together: `requireStack()` reads `deps.stack`, and in login-only mode the entrypoint
       // created that stack lazily during this call, so this is the only place it reaches the adapter.
@@ -283,8 +335,20 @@ export async function buildWebServer(deps: WebServerDeps) {
     // Delegated to `stack.identity.list()`, which resolves each agent's id/subjectKind/custody from that
     // agent's OWN database. This route used to query the ACTIVE agent's database for every summary, so the
     // fields were only ever right for the active agent.
+    //
+    // IN LOGIN-ONLY MODE there is no layer to delegate to: `createAgentStack` needs a handle to adopt, and a
+    // process that just restarted has not activated one yet, so the entrypoint has no stack to hand over.
+    // `requireStack()` then threw, this route answered 500 "trust-app-api layer not configured", and the
+    // login page's picker rendered "Could not load VTAs" — a registered agent looked as if it had vanished
+    // after a logout + restart, even though its directory was untouched under P2PTS_HOME/vta/.
+    //
+    // The listing does NOT need an active agent: `host.listAgents()` scans `P2PTS_HOME/vta/*` and opens no
+    // database (see `Host.listAgents` in app-api), which is exactly the "pick before any agent is active"
+    // listing the TUI picker uses. So fall back to the host when there is no layer. The richer
+    // `identity.list()` stays the answer once a stack exists (it adds id/subjectKind/custody from each agent's
+    // own database), so nothing about an active session changes.
     try {
-      return await requireStack().identity.list();
+      return deps.stack ? await deps.stack.identity.list() : deps.host.listAgents();
     } catch (err: any) {
       return reply.code(500).send({ error: { message: err?.message ?? 'agent listing failed' } });
     }
@@ -1385,6 +1449,53 @@ export async function buildWebServer(deps: WebServerDeps) {
       return await requireStack().connectivity.pushIdentity();
     } catch (err: any) {
       return reply.code(500).send({ error: err?.message ?? 'Unknown error' });
+    }
+  });
+
+  // ── Bootstrap server (the startup screen's boxes) ─────────────────────
+  //
+  // Read BEFORE an agent exists, so it must never require one — the login screen
+  // renders with empty, editable boxes rather than an error page when this
+  // machine has no bootstrap configured yet.
+  app.get('/api/bootstrap/config', async (_req, _reply) => {
+    if (!deps.bootstrapConfig) {
+      return { host: '', peerId: '', tcpPort: 4001, wsPort: 4002, source: 'none' as const };
+    }
+    return deps.bootstrapConfig();
+  });
+
+  // ── VTNs (the login screen's network picker) ──────────────────────────
+  //
+  // The list comes from the bootstrap peer directory, which only exists once the
+  // agent has registered — so these two require an active agent, unlike
+  // `/api/bootstrap/config` above.
+  app.get('/api/vtns', async (_req, reply) => {
+    if (!hasAgent(deps.agent)) return reply.code(401).send({ error: { message: 'No active VTA' } });
+    return requireStack().connectivity.vtns();
+  });
+
+  // Join a VTN: adopt its key (so this agent is identified by that network) and
+  // dial the utility server that serves it.
+  app.post('/api/vtns/connect', async (req, reply) => {
+    if (!hasAgent(deps.agent)) return reply.code(401).send({ error: { message: 'No active VTA' } });
+    const { vtnKey } = req.body as { vtnKey?: string };
+    if (!vtnKey) return reply.code(400).send({ error: { message: 'Missing "vtnKey"' } });
+    try {
+      const result = await requireStack().connectivity.connectVtn(String(vtnKey));
+      // Remember the choice, so the next launch registers under this VTN from
+      // first contact instead of joining with no `net`.
+      await deps.onVtnConnected?.(result.vtnKey);
+      return result;
+    } catch (err: any) {
+      // `utility_server_unavailable` is the retryable transport condition → 503
+      // with the layer-aware reason, matching every other utility-server route.
+      //
+      // `connection` kind: this is a JOIN, not a mutation. Nothing was queued
+      // locally, so the mutation wording ("your change has been kept locally and
+      // will be sent automatically once the connection is back") was both wrong
+      // and actively misleading — it implied the join would complete by itself.
+      const reason = await utilityServerUnavailable(deps, `join the VTN "${vtnKey}"`, 'connection');
+      return reply.code(503).send({ error: { message: reason } });
     }
   });
 

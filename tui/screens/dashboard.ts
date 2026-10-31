@@ -44,6 +44,7 @@ import blessed from 'blessed';
 import { execSync } from 'node:child_process';
 import { platform } from 'node:os';
 import type {
+  BootstrapConfigApi,
   ConnectivityStatusDto,
   DiscoveredPeerDto,
   NetworkProfileDto,
@@ -53,6 +54,7 @@ import type {
 import { renderQr } from '../components/qr.js';
 import { showConnectScreen } from './connect.js';
 import { showChatScreen } from './chat.js';
+import { promptVtnJoin } from './network.js';
 import { showProfilesScreen } from './profiles.js';
 import { showCredentialsScreen } from './credentials.js';
 import { showDelegationsScreen } from './delegations.js';
@@ -108,6 +110,12 @@ async function copyToClipboard(text: string): Promise<boolean> {
 export async function showDashboard(
   screen: blessed.Widgets.Screen,
   stack: TrustStack,
+  /**
+   * The bootstrap-config domain, so [j] Join VTN can record the network this
+   * machine joined. Optional so a caller that only renders (tests) can omit it —
+   * the join itself still works, only the persistence is skipped.
+   */
+  config?: BootstrapConfigApi,
 ): Promise<void> {
 
   // Read the render facts BEFORE the layout: the panes are labelled from them, so there is no "loading" state to
@@ -198,7 +206,7 @@ export async function showDashboard(
     height: 3,
     border: { type: 'line' },
     style: { border: { fg: 'cyan' }, fg: 'white', bg: 'blue' },
-    content: '  [o] OOBI  [c] Connect  [d] Discover  [p] Profiles  [v] Creds  [e] Delegations  [a] Auth  [n] Network  [g] Re-reg  [r] Reconnect  [x] Disconnect  [q] Quit',
+    content: '  [o] OOBI  [c] Connect  [d] Discover  [p] Profiles  [v] Creds  [e] Delegations  [a] Auth  [j] Join VTN  [n] Network  [g] Re-reg  [r] Reconnect  [x] Disconnect  [q] Quit',
   });
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -434,6 +442,27 @@ export async function showDashboard(
     }
     forceRepaint(screen);
     await showChatScreen(screen, stack, selected, logPane);
+    relList.focus();
+    forceRepaint(screen);
+  });
+
+  // [j] Join a VTN — the same picker the startup flow shows, so a network can be
+  // changed without restarting the agent. The choice is recorded so the next
+  // launch registers under it from first contact.
+  screen.key(['j'], async () => {
+    logPane.log('{cyan-fg}[j] Listing networks (VTNs) on this bootstrap server...{/cyan-fg}');
+    screen.render();
+    try {
+      const joined = await promptVtnJoin(screen, stack);
+      if (joined) {
+        config?.recordVtn(joined);
+        logPane.log(`{green-fg}Joined ${joined}.{/green-fg}`);
+      } else {
+        logPane.log('{yellow-fg}No network joined.{/yellow-fg}');
+      }
+    } catch (err) {
+      logPane.log(`{red-fg}Join failed: ${(err as Error).message}{/red-fg}`);
+    }
     relList.focus();
     forceRepaint(screen);
   });

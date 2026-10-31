@@ -34,6 +34,7 @@
 import blessed from 'blessed';
 import type { Host } from '@p2p-trust-stack/app-api/index.js';
 import type { AgentHandle } from '@p2p-trust-stack/app-api/index.js';
+import type { BootstrapClientEnv } from '@p2p-trust-stack/app-api/index.js';
 import { forceRepaint } from '../app.js';
 
 // ---------------------------------------------------------------------------
@@ -43,7 +44,23 @@ import { forceRepaint } from '../app.js';
 export async function showAgentPicker(
   screen: blessed.Widgets.Screen,
   host: Host,
+  /**
+   * The bootstrap target + VTN key to register under.
+   *
+   * Supplied by `app.ts` from the bootstrap boxes it prompted for (and the VTN
+   * this machine last joined). The agent is a CLIENT: this is the only channel by
+   * which it learns which bootstrap server to dial.
+   */
+  bootstrap?: {
+    env: BootstrapClientEnv | null;
+    net?: string;
+  },
 ): Promise<AgentHandle> {
+  /** The `AgentConfig` extras every create/unlock in this screen must carry. */
+  const target = {
+    ...(bootstrap?.env ? { bootstrapEnv: bootstrap.env } : {}),
+    ...(bootstrap?.net ? { net: bootstrap.net } : {}),
+  };
   return new Promise((resolve, reject) => {
     const agents = host.listAgents();
 
@@ -101,7 +118,7 @@ export async function showAgentPicker(
     const nHandler = async () => {
       unbindPickerKeys();
       try {
-        const agent = await showCreateAgentForm(screen, host, box);
+        const agent = await showCreateAgentForm(screen, host, box, target);
         box.destroy();
         forceRepaint(screen);
         resolve(agent);
@@ -178,7 +195,7 @@ export async function showAgentPicker(
         screen.render();
 
         try {
-          const agent = await host.unlockAgent({ name: selected.name, passphrase });
+          const agent = await host.unlockAgent({ name: selected.name, passphrase, ...target });
           statusText.destroy();
           unbindPickerKeys();
           box.destroy();
@@ -217,6 +234,7 @@ async function showCreateAgentForm(
   screen: blessed.Widgets.Screen,
   host: Host,
   parentBox: blessed.Widgets.BoxElement | undefined,
+  target: { bootstrapEnv?: BootstrapClientEnv; net?: string } = {},
 ): Promise<AgentHandle> {
   // Destroy the picker box if it exists
   if (parentBox) parentBox.destroy();
@@ -315,7 +333,7 @@ async function showCreateAgentForm(
     if (retry === null) throw new Error('User cancelled');
     // Recursively restart (simple approach)
     formBox.destroy();
-    return showCreateAgentForm(screen, host, undefined);
+    return showCreateAgentForm(screen, host, undefined, target);
   }
 
   // Create the agent
@@ -324,7 +342,7 @@ async function showCreateAgentForm(
   screen.render();
 
   try {
-    const agent = await host.createAgent({ name: agentName, passphrase });
+    const agent = await host.createAgent({ name: agentName, passphrase, ...target });
     formBox.destroy();
     forceRepaint(screen);
     return agent;
