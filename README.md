@@ -44,15 +44,39 @@ transaction coordinator. There is no shared database.
 ### Pointing the agent at a bootstrap node
 
 Out of the box the agent runs in LAN-only mode. To register with a bootstrap /
-relay server, generate the `BOOTSTRAP_*` block in `.env`:
+relay server, write the `BOOTSTRAP_*` block in `.env` from the relay's BIP-39
+phrase:
 
 ```bash
-cp .env.example .env
-npm run init:bootstrap -- --host <dns-or-ip> --tcp-port 4001 --ws-port 4002
+# Keep the phrase file OUTSIDE this repo (e.g. ~/data/phrase.txt) — it is the
+# relay's PRIVATE KEY.
+npm run init:bootstrap -- --words-file ~/data/phrase.txt --host mediator.fpndtg.com
 ```
 
-The values must match the bootstrap server's own `.env`. See
-[`.env.example`](./.env.example) for the full list.
+The agent is a **client** of the relay: the tool writes the peer ID + address and
+**never the seed** (a client `.env` that carries `BOOTSTRAP_SEED_HEX` is refused at
+startup; re-running the tool strips a stale one). The values must match the
+bootstrap server's own `.env`. See [`.env.example`](./.env.example) for the full
+list.
+
+#### ⚠️ The shared development relay is public and NOT secure
+
+So that you can run an agent without standing up your own bootstrap server, the
+Trust Stackers **development** relay's phrase is published here on purpose:
+
+```
+belt cream keep gain improve ginger milk lava special come boat sorry finish
+bomb miracle trend garment noble chicken range account gravity shoe sense
+```
+
+It derives peer ID `12D3KooWKF2Tmh21NNSH5gWazfbmFEtTZS9XT1uXk8njFAy5jUda` at host
+`mediator.fpndtg.com`. Because that phrase is public, **anyone can impersonate the
+relay** — treat anything you send through it as observable. Use it only for
+exploration and demos.
+
+**For anything real, run your own bootstrap server** (see the
+[`bootstrap`](https://github.com/TrustStackers/bootstrap) repo) and keep its
+phrase private — store it outside the repo, never commit it.
 
 ## What it demonstrates
 
