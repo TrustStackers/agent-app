@@ -4,6 +4,7 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 
@@ -196,8 +197,10 @@ export async function buildWebServer(deps: WebServerDeps) {
   // This lives in PROCESS MEMORY only — nothing is written to SQLite or disk,
   // so POST /api/logout (and an agent switch via POST /api/activate) drops every
   // session: an agent logout loses all chat history, by design.
-  // Serve cytoscape.js from node_modules (npm dependency, not CDN)
-  const cyDistPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', 'cytoscape', 'dist', 'cytoscape.min.js');
+  // Serve cytoscape.js from node_modules (npm dependency, not CDN). Resolve it instead of assuming
+  // `<this repo>/node_modules/…`, so the path still works when dependencies are hoisted (npm
+  // workspaces) or installed by a different package manager.
+  const cyDistPath = createRequire(import.meta.url).resolve('cytoscape/dist/cytoscape.min.js');
   const cyContent = readFileSync(cyDistPath, 'utf-8');
   app.get('/lib/cytoscape.min.js', async (_req, reply) => {
     return reply.type('application/javascript').send(cyContent);
