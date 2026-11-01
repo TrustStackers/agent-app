@@ -6,8 +6,8 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "tui": "CEREMONY_TRACE=1 P2PTS_LOG_LEVEL=info node --experimental-strip-types --loader ./test-loader.mjs tui/app.ts",
-    "web": "CEREMONY_TRACE=1 P2PTS_LOG_LEVEL=info node --experimental-strip-types --loader ./test-loader.mjs web/server.ts",
+    "tui": "node --experimental-strip-types --loader ./test-loader.mjs tui/app.ts",
+    "web": "node --experimental-strip-types --loader ./test-loader.mjs web/server.ts",
     "start": "npm run web",
     "init:bootstrap": "node --experimental-strip-types --loader ./test-loader.mjs ./scripts/init-bootstrap-env.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
